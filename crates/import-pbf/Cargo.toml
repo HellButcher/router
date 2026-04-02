@@ -1,0 +1,22 @@
+[package]
+name = "router-import-pbf"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+rayon = "1.11"
+tracing.workspace = true
+bitflags.workspace = true
+crossbeam-channel.workspace = true
+thiserror.workspace = true
+
+router-types.workspace = true
+router-storage.workspace = true
+
+[dependencies.osm-pbf-reader]
+git = "https://github.com/HellButcher/osm-pbf.git"
+branch = "feat/new-protobuf-v4"
+#path = "../../../osm-pbf/reader"

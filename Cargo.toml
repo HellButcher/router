@@ -1,0 +1,91 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/*"
+]
+
+[workspace.package]
+version = "0.1.0-alpha"
+authors = ["Christoph Hommelsheim <mail@chommel.eu>"]
+license = "MIT"
+edition = "2024"
+
+[workspace.dependencies]
+# Logging
+log = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "tracing-log"] }
+
+# Error handling
+thiserror = "2.0"
+
+# Web
+axum = "0.8"
+tower = "0.5"
+tower-http = "0.6"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+schemars = "0.8"
+okapi = "0.7"
+
+# CLI
+clap = { version = "4.6", features = ["derive", "string"] }
+clap-verbosity-flag = { version = "3.0", default-features = false }
+clap_mangen = "0.3"
+anyhow = "1.0"
+
+# Data structures & utilities
+bitflags = "2.11"
+bytemuck = "1.25"
+crossbeam-channel = "0.5"
+crossbeam-queue = "0.3"
+
+# Internal crates
+router-algorithm = { path = "crates/algorithm" }
+router-import-pbf = { path = "crates/import-pbf" }
+router-polyline = { path = "crates/polyline" }
+router-server = { path = "crates/server" }
+router-service = { path = "crates/service" }
+router-storage = { path = "crates/storage" }
+router-types = { path = "crates/types" }
+
+[package]
+name = "router"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+publish = false
+
+[features]
+default = ["openapi"]
+openapi = ["router-server/openapi"]
+
+[dependencies]
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "signal"] }
+
+router-import-pbf.workspace = true
+router-service.workspace = true
+router-server.workspace = true
+
+tracing.workspace = true
+tracing-subscriber.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http = { workspace = true, features = ["trace", "compression-full", "fs"] }
+
+clap.workspace = true
+anyhow.workspace = true
+clap-verbosity-flag = {  workspace = true, features = ["tracing"] }
+
+[build-dependencies]
+clap.workspace = true
+clap-verbosity-flag.workspace = true
+clap_mangen.workspace = true
+anyhow.workspace = true
+
+[workspace.metadata.release]
+shared-version = true
+tag-prefix = ""

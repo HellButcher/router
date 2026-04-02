@@ -1,0 +1,80 @@
+use std::{hash::Hasher, marker::PhantomData, mem::size_of};
+
+use crate::pod::TablePod;
+
+use self::{node::Node, way::Way};
+
+pub mod node;
+pub mod way;
+pub mod attrib;
+
+#[repr(C)]
+pub struct SimpleHeader<I> {
+    hash: u64,
+    header_size: u64,
+    data_size: u64,
+    name: [u8; 128],
+    _phantom: PhantomData<fn(&I)>,
+}
+
+unsafe impl<I>  TablePod for SimpleHeader<I> {}
+
+impl<I: 'static> SimpleHeader<I> {
+    fn name_hash() -> u64 {
+        let mut hash = std::hash::DefaultHasher::new();
+        hash.write(std::any::type_name::<I>().as_bytes());
+        hash.finish()
+    }
+
+    pub fn verify(&self) -> bool {
+        self.hash == Self::name_hash()
+            && self.header_size == size_of::<Self>() as u64
+            && self.data_size == size_of::<I>() as u64
+    }
+}
+
+impl<I: 'static> Default for SimpleHeader<I> {
+    fn default() -> Self {
+        let mut r = Self {
+            hash: Self::name_hash(),
+            header_size: size_of::<Self>() as u64,
+            data_size: size_of::<I>() as u64,
+            name: [0; 128],
+            _phantom: PhantomData,
+        };
+        let name_bytes = std::any::type_name::<I>().as_bytes();
+        let name_len = name_bytes.len();
+        if name_len > 128 {
+            r.name.copy_from_slice(&name_bytes[..128]);
+        } else {
+            r.name[..name_len].copy_from_slice(name_bytes);
+        }
+        r
+    }
+}
+
+
+pub fn link_nodes_and_ways(nodes: &[Node], way_index: usize, way: &Way) {
+    // TODO: error handling
+    if let Ok(node_from_index) = nodes.binary_search_by_key(&way.from_node, |n| n.id) {
+        let mut current = 0;
+        while let Err(old) = nodes[node_from_index].first_way.compare_exchange(current, way.id.0, std::sync::atomic::Ordering::Acquire, std::sync::atomic::Ordering::Relaxed) {
+            way.next_way.store(old, std::sync::atomic::Ordering::Release);
+            current = old;
+        }
+    } else {
+        // TODO: mark way as border
+    };
+
+    if let Ok(node_to_index) = nodes.binary_search_by_key(&way.to_node, |n| n.id) {
+        let mut current = 0;
+        while let Err(old) = nodes[node_to_index].first_way_reverse.compare_exchange(current, way.id.0, std::sync::atomic::Ordering::Acquire, std::sync::atomic::Ordering::Relaxed) {
+            way.next_way_reverse.store(old, std::sync::atomic::Ordering::Release);
+            current = old;
+        }
+    } else {
+        // TODO: mark way as border
+    }
+}
+
+

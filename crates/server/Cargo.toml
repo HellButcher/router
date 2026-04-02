@@ -1,0 +1,22 @@
+[package]
+name = "router-server"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+openapi = ["dep:okapi", "dep:schemars", "router-service/schemars"]
+
+[dependencies]
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+axum.workspace = true
+
+okapi = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
+router-service = { workspace = true, features = ["serde"] }
+

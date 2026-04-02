@@ -1,0 +1,85 @@
+@import "maplibre-gl/dist/maplibre-gl.css";
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  color: #000;
+}
+
+:root {
+  --sidebar-width: 400px;
+}
+
+#map {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 100%;
+  transition: margin-left 0.2s ease;
+}
+
+#map .maplibregl-ctrl-top-left,
+#map .maplibregl-ctrl-bottom-left {
+  transition: left 0.2s ease;
+}
+
+#sidebar {
+  position: absolute;
+  top: 0;
+  left: calc(-1 * var(--sidebar-width));
+  width: var(--sidebar-width);
+  height: 100%;
+  z-index: 1;
+  background-color: rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(10px);
+  transition: left 0.2s ease;
+
+  display: flex;
+  flex-direction: column;
+
+  * {
+    all: unset;
+  }
+  header,h1, h2, h4, h5, h6, ol, ul, li {
+    display: block;
+  }
+  header {
+    background-color: teal;
+    color: white;
+    h1 {
+      font-size: 1.5em;
+      font-weight: bold;
+      padding: 10px;
+      text-transform: uppercase;
+      text-shadow: -2px -2px 1px rgba(0, 0, 0, 0.5);
+    }
+  }
+  nav, footer {
+    background-color: rgba(255, 255, 255, 0.8);
+  }
+}
+
+.maplibregl-ctrl button.maplibregl-ctrl-sidebar-toggle .maplibregl-ctrl-icon {
+  background-image: url("icons/burger-menu.svg");
+}
+
+.sidebar-open #sidebar {
+  left: 0;
+}
+
+.sidebar-open #map .maplibregl-ctrl-top-left,
+.sidebar-open #map .maplibregl-ctrl-bottom-left {
+  left: var(--sidebar-width);
+}
+
+.sidebar-open .maplibregl-ctrl button.maplibregl-ctrl-sidebar-toggle .maplibregl-ctrl-icon {
+  background-image: url("icons/close.svg");
+}
+
+#sidebar .sidebar-scroll {
+  flex: 1;
+  overflow-y: auto;
+}
+

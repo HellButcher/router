@@ -1,0 +1,15 @@
+[package]
+name = "router-storage"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+bytemuck.workspace = true
+crossbeam-queue.workspace = true
+crossbeam-channel.workspace = true
+memmap2 = "0.9"
+
+router-types = { workspace = true, features = ["bytemuck"] }

@@ -1,0 +1,22 @@
+[package]
+name = "router-service"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+serde = ["dep:serde", "dep:serde_json", "router-types/serde"]
+schemars = ["dep:schemars", "router-types/schemars"]
+
+[dependencies]
+tracing.workspace = true
+thiserror.workspace = true
+
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
+
+router-types.workspace = true
+router-polyline.workspace = true

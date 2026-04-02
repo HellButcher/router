@@ -1,0 +1,13 @@
+[package]
+name = "router-types"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+bytemuck = { workspace = true, optional = true, features = ["derive"] }
+serde = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
+geo-types = { version = "0.7", optional = true }
