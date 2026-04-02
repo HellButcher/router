@@ -1,15 +1,15 @@
+#[cfg(feature = "bytemuck")]
+use bytemuck::{Pod, Zeroable};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use std::{
     fmt::{self, Display},
     ops::Div,
 };
-#[cfg(feature="serde")]
-use serde::{Deserialize, Serialize};
-#[cfg(feature="bytemuck")]
-use bytemuck::{Pod, Zeroable};
 
-#[cfg_attr(feature="serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature="serde", serde(transparent))]
-#[cfg_attr(feature="bytemuck", derive(Pod, Zeroable))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+#[cfg_attr(feature = "bytemuck", derive(Pod, Zeroable))]
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[repr(transparent)]
 pub struct Fixed<T, const EXP: u32>(T);

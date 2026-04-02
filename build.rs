@@ -1,4 +1,4 @@
-use clap::{Command,CommandFactory};
+use clap::{Command, CommandFactory};
 use std::env;
 use std::io;
 use std::path::{Path, PathBuf};

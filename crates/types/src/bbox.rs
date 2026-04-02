@@ -1,13 +1,13 @@
-#[cfg(feature="serde")]
-use serde::{Deserialize, Serialize};
-#[cfg(feature="bytemuck")]
-use bytemuck::{Pod, Zeroable};
 use crate::coordinate::LatLon;
+#[cfg(feature = "bytemuck")]
+use bytemuck::{Pod, Zeroable};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq)]
-#[cfg_attr(feature="serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature="bytemuck", derive(Pod, Zeroable))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "bytemuck", derive(Pod, Zeroable))]
 pub struct BoundingBox {
     pub min: LatLon,
     pub max: LatLon,

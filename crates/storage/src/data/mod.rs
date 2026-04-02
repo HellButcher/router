@@ -4,9 +4,9 @@ use crate::pod::TablePod;
 
 use self::{node::Node, way::Way};
 
+pub mod attrib;
 pub mod node;
 pub mod way;
-pub mod attrib;
 
 #[repr(C)]
 pub struct SimpleHeader<I> {
@@ -17,7 +17,7 @@ pub struct SimpleHeader<I> {
     _phantom: PhantomData<fn(&I)>,
 }
 
-unsafe impl<I>  TablePod for SimpleHeader<I> {}
+unsafe impl<I> TablePod for SimpleHeader<I> {}
 
 impl<I: 'static> SimpleHeader<I> {
     fn name_hash() -> u64 {
@@ -53,13 +53,18 @@ impl<I: 'static> Default for SimpleHeader<I> {
     }
 }
 
-
 pub fn link_nodes_and_ways(nodes: &[Node], way_index: usize, way: &Way) {
     // TODO: error handling
     if let Ok(node_from_index) = nodes.binary_search_by_key(&way.from_node, |n| n.id) {
         let mut current = 0;
-        while let Err(old) = nodes[node_from_index].first_way.compare_exchange(current, way.id.0, std::sync::atomic::Ordering::Acquire, std::sync::atomic::Ordering::Relaxed) {
-            way.next_way.store(old, std::sync::atomic::Ordering::Release);
+        while let Err(old) = nodes[node_from_index].first_way.compare_exchange(
+            current,
+            way.id.0,
+            std::sync::atomic::Ordering::Acquire,
+            std::sync::atomic::Ordering::Relaxed,
+        ) {
+            way.next_way
+                .store(old, std::sync::atomic::Ordering::Release);
             current = old;
         }
     } else {
@@ -68,13 +73,17 @@ pub fn link_nodes_and_ways(nodes: &[Node], way_index: usize, way: &Way) {
 
     if let Ok(node_to_index) = nodes.binary_search_by_key(&way.to_node, |n| n.id) {
         let mut current = 0;
-        while let Err(old) = nodes[node_to_index].first_way_reverse.compare_exchange(current, way.id.0, std::sync::atomic::Ordering::Acquire, std::sync::atomic::Ordering::Relaxed) {
-            way.next_way_reverse.store(old, std::sync::atomic::Ordering::Release);
+        while let Err(old) = nodes[node_to_index].first_way_reverse.compare_exchange(
+            current,
+            way.id.0,
+            std::sync::atomic::Ordering::Acquire,
+            std::sync::atomic::Ordering::Relaxed,
+        ) {
+            way.next_way_reverse
+                .store(old, std::sync::atomic::Ordering::Release);
             current = old;
         }
     } else {
         // TODO: mark way as border
     }
 }
-
-

@@ -1,7 +1,7 @@
 use std::ops::Deref;
 
-pub mod error;
 pub mod common;
+pub mod error;
 pub mod info;
 pub mod locate;
 pub mod matrix;
