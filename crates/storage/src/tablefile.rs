@@ -410,11 +410,12 @@ impl<D: TableData> Appender<D> {
             if data.is_empty() {
                 continue;
             }
-            bufs[i] = IoSlice::new(unsafe { slice_as_bytes(data) });
-            i += 1;
             if i >= bufs.len() {
                 write_all_vectored(&mut self.0, &mut bufs)?;
+                i = 0;
             }
+            bufs[i] = IoSlice::new(unsafe { slice_as_bytes(data) });
+            i += 1;
         }
         if i > 0 {
             write_all_vectored(&mut self.0, &mut bufs[..i])?;

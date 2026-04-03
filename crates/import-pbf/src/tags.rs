@@ -32,6 +32,7 @@ macro_rules! define_tag_enum {
     };
 }
 
+#[allow(unused_macros)]
 macro_rules! define_tag_struct {
     (
         $(#[$m:meta])*

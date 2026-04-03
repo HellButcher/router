@@ -1,5 +1,6 @@
 import './style.css'
 import { Map, addProtocol, FullscreenControl, GeolocateControl, NavigationControl, ScaleControl, GlobeControl, type IControl, type ControlPosition } from 'maplibre-gl';
+import { SnapControl } from './controls/snap';
 import { Protocol } from "pmtiles";
 import { layers, namedFlavor } from '@protomaps/basemaps';
 import { html, render } from 'lit-html';
@@ -98,6 +99,7 @@ class SidebarToggleControl implements IControl {
 }
 
 map.addControl(new SidebarToggleControl());
+map.addControl(new SnapControl());
 
 const renderSidebar = () => html`
   <header>

@@ -53,7 +53,7 @@ impl<I: 'static> Default for SimpleHeader<I> {
     }
 }
 
-pub fn link_nodes_and_ways(nodes: &[Node], way_index: usize, way: &Way) {
+pub fn link_nodes_and_ways(nodes: &[Node], _way_index: usize, way: &Way) {
     // TODO: error handling
     if let Ok(node_from_index) = nodes.binary_search_by_key(&way.from_node, |n| n.id) {
         let mut current = 0;

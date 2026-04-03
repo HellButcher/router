@@ -83,3 +83,27 @@ body {
   overflow-y: auto;
 }
 
+/* Snap control */
+.maplibregl-ctrl button.maplibregl-ctrl-snap .maplibregl-ctrl-icon {
+  background-image: url("icons/snap.svg");
+}
+
+.maplibregl-ctrl button.maplibregl-ctrl-snap.active .maplibregl-ctrl-icon {
+  background-image: url("icons/snap-active.svg");
+}
+
+.maplibregl-ctrl button.maplibregl-ctrl-snap.active {
+  background-color: rgba(0, 119, 204, 0.1);
+}
+
+/* Snapped-location marker */
+.snap-marker {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background-color: #0077cc;
+  border: 2px solid white;
+  box-shadow: 0 0 0 2px #0077cc;
+  pointer-events: none;
+}
+

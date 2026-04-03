@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::{io, ops::Deref, path::PathBuf};
 
 pub mod common;
 pub mod error;
@@ -8,16 +8,39 @@ pub mod matrix;
 pub mod route;
 
 use crate::error::{Error, Result};
+use router_storage::spatial::SpatialIndex;
+
+/// Options for creating a [`Service`].
+pub struct ServiceOptions {
+    /// Path to the storage directory (must contain `spatial.bin`).
+    pub storage_dir: PathBuf,
+    /// Maximum locate search radius in metres.
+    pub max_radius_m: f32,
+}
+
+impl Default for ServiceOptions {
+    fn default() -> Self {
+        Self {
+            storage_dir: PathBuf::from("storage"),
+            max_radius_m: 1_000.0,
+        }
+    }
+}
 
 pub struct Service {
     profiles: Vec<String>,
+    pub(crate) spatial: SpatialIndex,
+    pub(crate) max_radius_m: f32,
 }
 
 impl Service {
-    pub fn new() -> Self {
-        Self {
+    pub fn open(options: ServiceOptions) -> io::Result<Self> {
+        let spatial = SpatialIndex::open(options.storage_dir.join("spatial.bin"))?;
+        Ok(Self {
             profiles: vec!["car".to_owned(), "hgv".to_owned()],
-        }
+            spatial,
+            max_radius_m: options.max_radius_m,
+        })
     }
 
     pub fn default_profile(&self) -> Result<&str> {
@@ -43,12 +66,5 @@ impl Service {
         } else {
             self.default_profile()
         }
-    }
-}
-
-impl Default for Service {
-    #[inline(always)]
-    fn default() -> Self {
-        Self::new()
     }
 }

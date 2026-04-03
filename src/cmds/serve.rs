@@ -1,5 +1,5 @@
 use axum::Router;
-use router_service::Service;
+use router_service::{Service, ServiceOptions};
 use std::{net::SocketAddr, sync::Arc};
 use tokio::{net::TcpListener, signal};
 use tower::ServiceBuilder;
@@ -10,7 +10,11 @@ use crate::args::serve::*;
 pub async fn serve(args: &ServeArgs) -> anyhow::Result<()> {
     let addr: SocketAddr = args.listen.parse()?;
 
-    let service = Arc::new(Service::new());
+    let service = Arc::new(Service::open(ServiceOptions {
+        storage_dir: args.storage_dir.clone(),
+        ..Default::default()
+    })?);
+
     let app = Router::new()
         .nest("/api/v1/", router_server::make_service_router(service))
         .route(
@@ -19,7 +23,7 @@ pub async fn serve(args: &ServeArgs) -> anyhow::Result<()> {
                 axum::response::Json(router_server::openapi::get_openapi("/api/v1/"))
             }),
         )
-        .fallback_service(ServeDir::new("frontend"))
+        .fallback_service(ServeDir::new("frontend/dist"))
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())

@@ -10,6 +10,7 @@ use router_storage::{
         node::{Node, NodeId},
         way::{Way, WayId},
     },
+    spatial::SpatialIndexBuilder,
     tablefile::TableFile,
 };
 use router_types::coordinate::LatLon;
@@ -117,6 +118,8 @@ impl<R: io::BufRead + Send> Importer<R> {
         let mut nodes_append = nodes.appender().map_err(Error::WriteError)?.spawn();
         let mut ways_append = ways.appender().map_err(Error::WriteError)?.spawn();
 
+        let _span = tracing::info_span!("import").entered();
+        let _span = tracing::info_span!("parse_blobs").entered();
         blobs
             .into_iter()
             .map(|b| (nodes_append.start(), ways_append.start(), b))
@@ -175,9 +178,11 @@ impl<R: io::BufRead + Send> Importer<R> {
             .join()
             .expect("the way-writer thread has panicked");
 
+        drop(_span);
         tracing::info!("written nodes and ways");
 
         {
+            let _span = tracing::info_span!("link_nodes_and_ways").entered();
             let nodes_slice = nodes.get_all().map_err(Error::WriteError)?;
             let ways_slice = ways.get_all().map_err(Error::WriteError)?;
             let nodes_slice: &[Node] = &nodes_slice;
@@ -188,14 +193,32 @@ impl<R: io::BufRead + Send> Importer<R> {
         }
 
         tracing::info!("filter nodes");
-        nodes
-            .filter(Node::is_connected)
-            .map_err(Error::WriteError)?;
+        {
+            let _span = tracing::info_span!("filter_nodes").entered();
+            nodes
+                .filter(Node::is_connected)
+                .map_err(Error::WriteError)?;
+        }
 
         tracing::info!("linked nodes and ways");
 
         nodes.flush().map_err(Error::WriteError)?;
         ways.flush().map_err(Error::WriteError)?;
+
+        tracing::info!("building spatial index");
+        {
+            let _span = tracing::info_span!("build_spatial_index").entered();
+            let nodes_ref = nodes.get_all().map_err(Error::WriteError)?;
+            // Deref to &[Node] (Sync) so the closure can be shared across rayon threads.
+            let nodes: &[Node] = &*nodes_ref;
+            SpatialIndexBuilder::new()
+                .build(
+                    nodes.len(),
+                    |i| (nodes[i].pos.lat, nodes[i].pos.lon),
+                    self.target_dir.join("spatial.bin"),
+                )
+                .map_err(Error::WriteError)?;
+        }
 
         tracing::info!("flushed");
 

@@ -20,3 +20,4 @@ schemars = { workspace = true, optional = true }
 
 router-types.workspace = true
 router-polyline.workspace = true
+router-storage.workspace = true

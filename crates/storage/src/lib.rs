@@ -1,5 +1,7 @@
 pub mod data;
+pub(crate) mod extsort;
 mod pagefile;
+pub mod spatial;
 pub mod tablefile;
 
 mod pod {
