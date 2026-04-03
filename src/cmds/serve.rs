@@ -1,11 +1,22 @@
 use axum::Router;
 use router_service::{Service, ServiceOptions};
+use std::io::Write;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::{net::TcpListener, signal};
 use tower::ServiceBuilder;
 use tower_http::{compression::CompressionLayer, services::ServeDir, trace::TraceLayer};
 
 use crate::args::serve::*;
+
+pub const API_BASE_PATH: &str = "/api/v1";
+
+pub fn print_openapi() -> anyhow::Result<()> {
+    let spec = router_server::openapi::get_openapi(API_BASE_PATH);
+    let out = std::io::stdout();
+    serde_json::to_writer_pretty(&out, &spec)?;
+    writeln!(&out)?;
+    Ok(())
+}
 
 pub async fn serve(args: &ServeArgs) -> anyhow::Result<()> {
     let addr: SocketAddr = args.listen.parse()?;
@@ -16,11 +27,11 @@ pub async fn serve(args: &ServeArgs) -> anyhow::Result<()> {
     })?);
 
     let app = Router::new()
-        .nest("/api/v1/", router_server::make_service_router(service))
+        .nest(API_BASE_PATH, router_server::make_service_router(service))
         .route(
             "/openapi.json",
             axum::routing::get(async || {
-                axum::response::Json(router_server::openapi::get_openapi("/api/v1/"))
+                axum::response::Json(router_server::openapi::get_openapi(API_BASE_PATH))
             }),
         )
         .fallback_service(ServeDir::new("frontend/dist"))

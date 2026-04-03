@@ -6,6 +6,7 @@ use rayon::iter::{
 };
 use router_storage::{
     data::{
+        attrib::{HighwayClass, WayFlags},
         link_nodes_and_ways,
         node::{Node, NodeId},
         way::{Way, WayId},
@@ -156,10 +157,17 @@ impl<R: io::BufRead + Send> Importer<R> {
                         if way_tags.is_excluded() {
                             continue;
                         }
+                        let highway = highway_class(way_tags.highway);
+                        let flags = way_flags(&way_tags);
+                        let max_speed = way_tags.max_speed.unwrap_or(0);
                         let mut refs = w.refs().iter();
                         if let Some(mut current) = refs.next() {
                             for next in refs {
-                                ways.push(Way::new(id, NodeId(current), NodeId(next)));
+                                let mut way = Way::new(id, NodeId(current), NodeId(next));
+                                way.highway = highway;
+                                way.flags = flags;
+                                way.max_speed = max_speed;
+                                ways.push(way);
                                 current = next;
                             }
                         }
@@ -224,4 +232,65 @@ impl<R: io::BufRead + Send> Importer<R> {
 
         Ok(())
     }
+}
+
+fn highway_class(highway: Option<tags::Highway>) -> HighwayClass {
+    use tags::Highway as H;
+    match highway {
+        Some(H::motorway) => HighwayClass::Motorway,
+        Some(H::trunk) => HighwayClass::Trunk,
+        Some(H::primary) => HighwayClass::Primary,
+        Some(H::secondary) => HighwayClass::Secondary,
+        Some(H::tertiary) => HighwayClass::Tertiary,
+        Some(H::motorway_link) => HighwayClass::MotorwayLink,
+        Some(H::trunk_link) => HighwayClass::TrunkLink,
+        Some(H::primary_link) => HighwayClass::PrimaryLink,
+        Some(H::secondary_link) => HighwayClass::SecondaryLink,
+        Some(H::tertiary_link) => HighwayClass::TertiaryLink,
+        Some(H::unclassified) => HighwayClass::Unclassified,
+        Some(H::residential) => HighwayClass::Residential,
+        Some(H::living_street) => HighwayClass::LivingStreet,
+        Some(H::service) => HighwayClass::Service,
+        Some(H::track) => HighwayClass::Track,
+        Some(H::road) => HighwayClass::Road,
+        Some(H::pedestrian) => HighwayClass::Pedestrian,
+        Some(H::footway) => HighwayClass::Footway,
+        Some(H::cycleway) => HighwayClass::Cycleway,
+        Some(H::path) => HighwayClass::Path,
+        _ => HighwayClass::Unknown,
+    }
+}
+
+fn way_flags(tags: &tags::WayTags<'_>) -> WayFlags {
+    use tags::{Conditional, OneWay};
+    let mut flags = WayFlags::empty();
+
+    // Oneway
+    let is_oneway = matches!(&tags.oneway, Conditional::Simple(OneWay::yes));
+    let is_reverse = matches!(&tags.oneway, Conditional::Simple(OneWay::reverse));
+    if is_oneway {
+        flags |= WayFlags::ONEWAY;
+    }
+    if is_reverse {
+        flags |= WayFlags::ONEWAY_REVERSE;
+    }
+
+    // Motor vehicle / HGV restrictions based on highway class
+    use tags::Highway;
+    match tags.highway {
+        Some(Highway::footway)
+        | Some(Highway::pedestrian)
+        | Some(Highway::cycleway)
+        | Some(Highway::path) => {
+            flags |= WayFlags::NO_MOTOR;
+            flags |= WayFlags::NO_HGV;
+        }
+        Some(Highway::motorway) | Some(Highway::motorway_link) => {
+            flags |= WayFlags::NO_BICYCLE;
+            flags |= WayFlags::NO_FOOT;
+        }
+        _ => {}
+    }
+
+    flags
 }

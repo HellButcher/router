@@ -135,6 +135,21 @@ impl From<RouterError> for Problem {
                 title: "No Profiles Available",
                 detail,
             },
+            RouterError::NoRoute => Self {
+                status: 404,
+                title: "No Route Found",
+                detail,
+            },
+            RouterError::InvalidRequest(_) => Self {
+                status: 400,
+                title: "Invalid Request",
+                detail,
+            },
+            RouterError::StorageError(_) => Self {
+                status: 500,
+                title: "Internal Storage Error",
+                detail,
+            },
             RouterError::PolylineDecodingError(_) => Self {
                 status: 500,
                 title: "Polyline Decoding Error",
@@ -170,6 +185,13 @@ pub async fn locate(
     Ok(Json(service.locate(request.0).await?))
 }
 
+pub async fn route(
+    service: ServiceState,
+    request: Json<router_service::route::RouteRequest>,
+) -> Result<Json<router_service::route::RouteResponse>> {
+    Ok(Json(service.calculate_route(request.0).await?))
+}
+
 make_router! {
     paths {
         "/info" {
@@ -194,6 +216,22 @@ make_router! {
                 response: {
                     description: "The locate response body: the resolved nearest locations"
                     type: crate::Result<axum::response::Json<router_service::locate::LocateResponse>>
+                }
+            }
+        },
+        "/route" {
+            post => route {
+                sumary: "Calculate a route between two or more locations"
+                parameters: [
+                    {
+                        name: request
+                        description: "The route request body"
+                        type: axum::extract::Json<router_service::route::RouteRequest>
+                    }
+                ]
+                response: {
+                    description: "The route response: path geometry and travel summary"
+                    type: crate::Result<axum::response::Json<router_service::route::RouteResponse>>
                 }
             }
         }

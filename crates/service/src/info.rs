@@ -28,7 +28,7 @@ impl Service {
     pub fn info(&self) -> InfoResponse {
         InfoResponse {
             status: ServiceStatus::Ok,
-            profiles: self.profiles.clone(),
+            profiles: self.profile_names().map(str::to_owned).collect(),
             version: env!("CARGO_PKG_VERSION"),
         }
     }

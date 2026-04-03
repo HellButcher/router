@@ -53,7 +53,10 @@ impl Service {
     /// Uses the spatial index with the configured `max_radius_m`. Inputs with
     /// no node within that radius are returned with their original coordinate.
     pub async fn locate(&self, request: LocateRequest) -> Result<LocateResponse> {
-        let profile = self.get_opt_profile(request.profile.as_deref())?.to_owned();
+        let profile = self
+            .get_opt_profile(request.profile.as_deref())?
+            .name
+            .to_owned();
         let mut locations: Vec<Location> = request.locations.try_into()?;
 
         let max_radius_m = self.max_radius_m;

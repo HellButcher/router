@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bytemuck", derive(Pod, Zeroable))]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct BoundingBox {
     pub min: LatLon,
     pub max: LatLon,

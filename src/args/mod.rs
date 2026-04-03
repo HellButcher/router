@@ -25,4 +25,8 @@ pub enum Commands {
 
     /// Starts a server.
     Serve(serve::ServeArgs),
+
+    /// Print out the OpenAPI spec for the server
+    #[clap(hide = true)]
+    OpenApi,
 }

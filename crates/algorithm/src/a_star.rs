@@ -3,19 +3,22 @@ use std::{
     collections::{BinaryHeap, HashMap, hash_map::Entry},
 };
 
-use crate::Graph;
+use crate::{Graph, reconstruct_path};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 struct HeapState {
-    cost: usize,
+    /// f = g + h (priority for the heap).
+    f_cost: usize,
+    /// g = true cost from start to this node.
+    g_cost: usize,
     position: usize,
 }
 
 impl Ord for HeapState {
     fn cmp(&self, other: &Self) -> Ordering {
         other
-            .cost
-            .cmp(&self.cost)
+            .f_cost
+            .cmp(&self.f_cost)
             .then_with(|| self.position.cmp(&other.position))
     }
 }
@@ -27,38 +30,60 @@ impl PartialOrd for HeapState {
     }
 }
 
-pub fn a_star(graph: impl Graph, start: usize, goal: usize) {
-    let mut dist = HashMap::new();
+/// Run A* from `start` to `goal` on `graph`.
+///
+/// Returns `Some((path, cost))` where `path` is the sequence of node indices
+/// from `start` to `goal` (inclusive) and `cost` is the total true edge cost.
+/// Returns `None` if no path exists.
+pub fn a_star(graph: impl Graph, start: usize, goal: usize) -> Option<(Vec<usize>, usize)> {
+    let mut dist: HashMap<usize, usize> = HashMap::new();
+    let mut predecessors: HashMap<usize, usize> = HashMap::new();
     let mut heap = BinaryHeap::new();
+
     dist.insert(start, 0);
     heap.push(HeapState {
-        cost: 0,
+        f_cost: graph.heuristic(start, goal),
+        g_cost: 0,
         position: start,
     });
 
-    while let Some(HeapState { position, .. }) = heap.pop() {
+    while let Some(HeapState {
+        g_cost, position, ..
+    }) = heap.pop()
+    {
         if position == goal {
-            break;
+            let path = reconstruct_path(&predecessors, start, goal);
+            return Some((path, g_cost));
         }
-        let old_cost = dist[&position];
+        // Skip stale entries.
+        if dist.get(&position).is_some_and(|&d| g_cost > d) {
+            continue;
+        }
         for edge in graph.outbound(position) {
-            let mut next = HeapState {
-                cost: old_cost + edge.cost,
-                position: edge.node,
-            };
-            match dist.entry(next.position) {
-                Entry::Occupied(mut e) if next.cost < *e.get() => {
-                    e.insert(next.cost);
-                    next.cost += graph.heuristic(next.position, goal);
-                    heap.push(next);
+            let next_g = g_cost + edge.cost;
+            match dist.entry(edge.node) {
+                Entry::Occupied(mut e) if next_g < *e.get() => {
+                    e.insert(next_g);
+                    predecessors.insert(edge.node, position);
+                    heap.push(HeapState {
+                        f_cost: next_g + graph.heuristic(edge.node, goal),
+                        g_cost: next_g,
+                        position: edge.node,
+                    });
                 }
                 Entry::Vacant(e) => {
-                    e.insert(next.cost);
-                    next.cost += graph.heuristic(next.position, goal);
-                    heap.push(next);
+                    e.insert(next_g);
+                    predecessors.insert(edge.node, position);
+                    heap.push(HeapState {
+                        f_cost: next_g + graph.heuristic(edge.node, goal),
+                        g_cost: next_g,
+                        position: edge.node,
+                    });
                 }
                 _ => {}
             }
         }
     }
+
+    None
 }

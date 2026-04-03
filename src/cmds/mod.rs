@@ -8,6 +8,7 @@ impl Commands {
         match self {
             Import(args) => self::import::import(args).await,
             Serve(args) => self::serve::serve(args).await,
+            OpenApi => self::serve::print_openapi(),
         }
     }
 }

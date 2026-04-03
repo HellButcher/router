@@ -349,6 +349,8 @@ pub struct WayTags<'s> {
     pub motorroad: bool,
     pub disused: bool,
     pub abandoned: bool,
+    /// Parsed `maxspeed` value in km/h, if present and valid.
+    pub max_speed: Option<u8>,
 }
 
 /*
@@ -370,6 +372,7 @@ impl<'s> WayTags<'s> {
             "motorroad" => self.motorroad = FromTag::from_tag(v),
             "disused" => self.disused = FromTag::from_tag(v),
             "abandoned" => self.abandoned = FromTag::from_tag(v),
+            "maxspeed" => self.max_speed = parse_max_speed(v),
             _ => {
                 let mut k2 = k;
                 if let Some(p) = k2.find(':') {
@@ -467,6 +470,29 @@ impl<'s> WayTags<'s> {
     pub fn is_excluded(&self) -> bool {
         self.highway.is_none_or(|h| h.is_excluded()) || self.access.is_excluded()
     }
+}
+
+/// Parse an OSM `maxspeed` tag value into km/h, capped at 255.
+///
+/// Handles plain integers (`"50"`), `"XX mph"`, and common named values
+/// (`"walk"`, `"living_street"`, `"urban"`, `"rural"`, `"motorway"`).
+fn parse_max_speed(v: &str) -> Option<u8> {
+    let v = v.trim();
+    // Named values
+    match v {
+        "walk" | "walking" => return Some(7),
+        "living_street" => return Some(10),
+        "urban" => return Some(50),
+        "rural" => return Some(90),
+        "motorway" => return Some(130),
+        _ => {}
+    }
+    if let Some(mph) = v.strip_suffix(" mph").or_else(|| v.strip_suffix("mph")) {
+        let kmh = mph.trim().parse::<u16>().ok()? * 1609 / 1000;
+        return Some(kmh.min(255) as u8);
+    }
+    let kmh = v.parse::<u16>().ok()?;
+    Some(kmh.min(255) as u8)
 }
 
 impl Conditional<'_, Access> {

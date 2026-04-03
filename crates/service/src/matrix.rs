@@ -64,7 +64,10 @@ pub struct MatrixResponse {
 
 impl Service {
     pub async fn calculate_matrix(&self, request: MatrixRequest) -> Result<MatrixResponse> {
-        let profile = self.get_opt_profile(request.profile.as_deref())?.to_owned();
+        let profile = self
+            .get_opt_profile(request.profile.as_deref())?
+            .name
+            .to_owned();
         let (from, to) = match request.locations {
             MatrixRequestLocations::Symetric { locations } => {
                 let locations: Vec<Location> = locations.try_into()?;

@@ -1114,6 +1114,7 @@ dependencies = [
  "router-import-pbf",
  "router-server",
  "router-service",
+ "serde_json",
  "tokio",
  "tower",
  "tower-http",
@@ -1161,6 +1162,7 @@ dependencies = [
 name = "router-service"
 version = "0.1.0-alpha"
 dependencies = [
+ "router-algorithm",
  "router-polyline",
  "router-storage",
  "router-types",
@@ -1175,6 +1177,7 @@ dependencies = [
 name = "router-storage"
 version = "0.1.0-alpha"
 dependencies = [
+ "bitflags",
  "bytemuck",
  "crossbeam-channel",
  "crossbeam-queue",

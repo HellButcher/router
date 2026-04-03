@@ -18,6 +18,7 @@ serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
 
+router-algorithm.workspace = true
 router-types.workspace = true
 router-polyline.workspace = true
 router-storage.workspace = true
