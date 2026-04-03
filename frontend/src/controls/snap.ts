@@ -5,6 +5,7 @@ import {
   type MapMouseEvent,
   Marker,
 } from "maplibre-gl";
+import { client } from "../api/client.js";
 
 export class SnapControl implements IControl {
   private _map?: MaplibreMap;
@@ -88,19 +89,15 @@ export class SnapControl implements IControl {
     this._abortController = ac;
 
     try {
-      const res = await fetch("/api/v1/locate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ locations: [{ lat, lon: lng }] }),
+      const { data } = await client.POST("/api/v1/locate", {
+        body: { locations: [{ lat, lon: lng }] },
         signal: ac.signal,
       });
-      if (!res.ok) return;
-      const data = await res.json();
-      const loc = data.locations?.[0];
+      const loc = data?.locations?.[0];
       if (!loc) return;
 
-      const snappedLat: number = loc.lat;
-      const snappedLng: number = loc.lon;
+      const snappedLat = loc.lat;
+      const snappedLng = loc.lon;
 
       if (this._marker) {
         this._marker.setLngLat([snappedLng, snappedLat]);

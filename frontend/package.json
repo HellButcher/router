@@ -9,11 +9,15 @@
     "preview": "vite preview",
     "fmt": "biome format --write",
     "check": "biome check",
-    "fix": "biome check --write"
+    "fix": "biome check --write",
+    "generate-api": "tsx scripts/generate-api.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",
+    "@types/node": "^22.19.17",
+    "openapi-typescript": "^7.13.0",
     "toml": "^4.1.1",
+    "tsx": "^4.21.0",
     "typescript": "~5.9.3",
     "vite": "^8.0.1"
   },
@@ -22,6 +26,7 @@
     "@protomaps/basemaps": "^5.7.2",
     "lit-html": "^3.3.2",
     "maplibre-gl": "^5.21.1",
+    "openapi-fetch": "^0.17.0",
     "pmtiles": "^4.4.0"
   }
 }

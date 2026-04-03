@@ -1,6 +1,6 @@
-import type { UserConfig } from "vite";
+import fs from "node:fs/promises";
 import toml from "toml";
-import fs from "fs/promises";
+import type { UserConfig } from "vite";
 
 // read version from workspace Cargo.toml
 async function readCargoVersion() {
@@ -11,7 +11,7 @@ async function readCargoVersion() {
     : cargoToml.workspace?.package?.version;
 }
 
-export default async ({ command, mode }) => {
+export default async ({ _command, _mode }) => {
   const version = await readCargoVersion();
 
   return {
