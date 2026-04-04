@@ -5,8 +5,6 @@ use router_types::bbox::BoundingBox;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use router_algorithm::Graph;
-
 use crate::{
     error::{Error, Result},
     graph::{RoadGraph, TravelTimeCost, haversine_m},

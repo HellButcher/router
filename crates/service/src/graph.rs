@@ -170,35 +170,30 @@ impl<C: CostModel> Iterator for WayIter<'_, C> {
                 continue;
             }
 
-            let (from_node, to_node) = if self.reverse {
-                (way.to_node, way.from_node)
+            // After node-index resolution from_node_idx / to_node_idx are direct
+            // table indices — no binary search needed.
+            let (from_idx, neighbour_idx) = if self.reverse {
+                (way.to_node_idx as usize, way.from_node_idx as usize)
             } else {
-                (way.from_node, way.to_node)
+                (way.from_node_idx as usize, way.to_node_idx as usize)
             };
 
-            // Look up the neighbour node table index via binary search on NodeId.
-            let all_nodes = match self.graph.nodes.get_all() {
-                Ok(s) => s,
-                Err(_) => continue,
+            let from = match self.graph.nodes.get(from_idx) {
+                Ok(n) => n,
+                Err(e) => {
+                    tracing::warn!(from_idx, error = %e, "nodes.get failed");
+                    continue;
+                }
             };
-            let neighbour_idx = match all_nodes.binary_search_by_key(&to_node, |n| n.id) {
-                Ok(i) => i,
-                Err(_) => {
+            let to = match self.graph.nodes.get(neighbour_idx) {
+                Ok(n) => n,
+                Err(e) => {
+                    tracing::warn!(neighbour_idx, error = %e, "nodes.get failed");
                     continue;
                 }
             };
 
-            // Look up from-node for cost calculation.
-            let from_idx = match all_nodes.binary_search_by_key(&from_node, |n| n.id) {
-                Ok(i) => i,
-                Err(_) => {
-                    continue;
-                }
-            };
-            let from = &all_nodes[from_idx];
-            let to = &all_nodes[neighbour_idx];
-
-            if let Some(cost) = self.graph.cost_model.edge_cost(&way, from, to) {
+            if let Some(cost) = self.graph.cost_model.edge_cost(&way, &from, &to) {
                 return Some(Edge {
                     node: neighbour_idx,
                     cost,

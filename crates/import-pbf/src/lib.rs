@@ -2,7 +2,8 @@ mod tags;
 
 use osm_pbf_reader::Blobs;
 use rayon::iter::{
-    IndexedParallelIterator, IntoParallelRefIterator, ParallelBridge, ParallelIterator,
+    IndexedParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelBridge,
+    ParallelIterator,
 };
 use router_storage::{
     data::{
@@ -170,14 +171,14 @@ impl<R: io::BufRead + Send> Importer<R> {
                                 } else {
                                     (NodeId(current), NodeId(next))
                                 };
-                                let mut way = Way::new(id, a, b);
+                                let mut way = Way::new(id, a.0 as u64, b.0 as u64);
                                 way.highway = highway;
                                 way.flags = flags;
                                 way.max_speed = max_speed;
                                 ways.push(way);
                                 // For bidirectional roads also create the reverse edge.
                                 if !is_oneway && !is_reverse {
-                                    let mut rev = Way::new(id, b, a);
+                                    let mut rev = Way::new(id, b.0 as u64, a.0 as u64);
                                     rev.highway = highway;
                                     rev.flags = flags;
                                     rev.max_speed = max_speed;
@@ -227,6 +228,31 @@ impl<R: io::BufRead + Send> Importer<R> {
                 .filter(Node::is_connected)
                 .map_err(Error::WriteError)?;
             tracing::info!(nodes = nodes.len(), ways = ways.len(), "filtered");
+        }
+
+        // Resolve from_node_idx / to_node_idx: replace the NodeId cast values
+        // written during PBF parsing with the actual node table indices.
+        tracing::info!("resolving node indices");
+        {
+            let _span = tracing::info_span!("resolve_node_indices").entered();
+            let nodes_slice = nodes.get_all().map_err(Error::WriteError)?;
+            let nodes_slice: &[Node] = &nodes_slice;
+            let ways_slice = ways.get_all_mut().map_err(Error::WriteError)?;
+            ways_slice
+                .par_iter_mut()
+                .try_for_each(|way| -> Result<()> {
+                    let from_id = NodeId(way.from_node_idx as i64);
+                    let to_id = NodeId(way.to_node_idx as i64);
+                    let from_idx = nodes_slice
+                        .binary_search_by_key(&from_id, |n| n.id)
+                        .map_err(|_| Error::NodeIdNotFound(from_id))?;
+                    let to_idx = nodes_slice
+                        .binary_search_by_key(&to_id, |n| n.id)
+                        .map_err(|_| Error::NodeIdNotFound(to_id))?;
+                    way.from_node_idx = from_idx as u64;
+                    way.to_node_idx = to_idx as u64;
+                    Ok(())
+                })?;
         }
 
         tracing::info!("flush nodes and ways");

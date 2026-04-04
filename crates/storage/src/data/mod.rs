@@ -3,7 +3,7 @@ use std::{hash::Hasher, marker::PhantomData, mem::size_of};
 use crate::pod::TablePod;
 
 use self::{
-    node::{NO_WAY, Node},
+    node::{NO_WAY, Node, NodeId},
     way::Way,
 };
 
@@ -63,7 +63,10 @@ impl<I: 'static> Default for SimpleHeader<I> {
 pub fn link_nodes_and_ways(nodes: &[Node], way_index: usize, way: &Way) {
     let ptr = way_index as u64;
 
-    if let Ok(node_from_index) = nodes.binary_search_by_key(&way.from_node, |n| n.id) {
+    // During PBF import the fields hold the raw NodeId cast to u64.
+    if let Ok(node_from_index) =
+        nodes.binary_search_by_key(&NodeId(way.from_node_idx as i64), |n| n.id)
+    {
         let mut current = NO_WAY;
         while let Err(old) = nodes[node_from_index].first_way.compare_exchange(
             current,
@@ -79,7 +82,9 @@ pub fn link_nodes_and_ways(nodes: &[Node], way_index: usize, way: &Way) {
         // TODO: mark way as border
     };
 
-    if let Ok(node_to_index) = nodes.binary_search_by_key(&way.to_node, |n| n.id) {
+    if let Ok(node_to_index) =
+        nodes.binary_search_by_key(&NodeId(way.to_node_idx as i64), |n| n.id)
+    {
         let mut current = NO_WAY;
         while let Err(old) = nodes[node_to_index].first_way_reverse.compare_exchange(
             current,
