@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
 
 pub mod import;
+pub mod route;
 pub mod serve;
 
 /// Calculates routes and their distance & travel-time on a map.
@@ -25,6 +26,9 @@ pub enum Commands {
 
     /// Starts a server.
     Serve(serve::ServeArgs),
+
+    /// Calculate a route from a JSON request on stdin, output to stdout.
+    Route(route::RouteArgs),
 
     /// Print out the OpenAPI spec for the server
     #[clap(hide = true)]

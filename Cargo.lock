@@ -931,7 +931,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 [[package]]
 name = "osm-pbf-proto"
 version = "0.1.1"
-source = "git+https://github.com/HellButcher/osm-pbf.git?branch=feat%2Fnew-protobuf-v4#9a59cdf6e2d8f2a345f0b3472d17ff1a4b64df29"
+source = "git+https://github.com/HellButcher/osm-pbf.git?branch=feat%2Fnew-protobuf-v4#cf8de1761cd4199310b539ed10cd0987ef1246c6"
 dependencies = [
  "bitflags",
  "protobuf",
@@ -941,7 +941,7 @@ dependencies = [
 [[package]]
 name = "osm-pbf-reader"
 version = "0.1.1"
-source = "git+https://github.com/HellButcher/osm-pbf.git?branch=feat%2Fnew-protobuf-v4#9a59cdf6e2d8f2a345f0b3472d17ff1a4b64df29"
+source = "git+https://github.com/HellButcher/osm-pbf.git?branch=feat%2Fnew-protobuf-v4#cf8de1761cd4199310b539ed10cd0987ef1246c6"
 dependencies = [
  "byteorder",
  "crossbeam-queue",

@@ -33,7 +33,7 @@ use std::{
 
 use memmap2::{Advice, MmapMut, MmapOptions, MmapRaw};
 
-use crate::{extsort, pod::TablePod};
+use crate::{data::node::NodeId, extsort, pod::TablePod};
 
 // ── constants ─────────────────────────────────────────────────────────────────
 

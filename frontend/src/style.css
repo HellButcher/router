@@ -118,3 +118,200 @@ body {
   box-shadow: 0 0 0 2px #0077cc;
   pointer-events: none;
 }
+
+/* Route control */
+.maplibregl-ctrl button.maplibregl-ctrl-route .maplibregl-ctrl-icon {
+  background-image: url("icons/route.svg");
+}
+
+.maplibregl-ctrl button.maplibregl-ctrl-route.active .maplibregl-ctrl-icon {
+  background-image: url("icons/route.svg");
+}
+
+.maplibregl-ctrl button.maplibregl-ctrl-route.active {
+  background-color: rgba(0, 119, 204, 0.1);
+}
+
+/* Waypoint markers */
+.waypoint-marker {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 11px;
+  font-weight: bold;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.waypoint-marker:hover {
+  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.6);
+}
+
+.waypoint-marker.start {
+  background-color: #22c55e;
+}
+
+.waypoint-marker.end {
+  background-color: #ef4444;
+}
+
+.waypoint-marker.via {
+  background-color: #0077cc;
+}
+
+/* Route sidebar section */
+.route-waypoints {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.route-waypoints h3 {
+  font-size: 0.75em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #666;
+  margin-bottom: 6px;
+}
+
+.route-waypoint-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.route-waypoint-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 2px solid white;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 9px;
+  font-weight: bold;
+}
+
+.route-waypoint-dot.start {
+  background-color: #22c55e;
+}
+.route-waypoint-dot.end {
+  background-color: #ef4444;
+}
+.route-waypoint-dot.via {
+  background-color: #0077cc;
+}
+
+.route-waypoint-coords {
+  flex: 1;
+  font-size: 0.8em;
+  color: #333;
+  font-variant-numeric: tabular-nums;
+}
+
+.route-waypoint-remove {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.08);
+  color: #666;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.route-waypoint-remove:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.route-actions {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.route-btn {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  font-size: 0.78em;
+  font-weight: 600;
+  cursor: pointer;
+  background: white;
+  color: #333;
+}
+
+.route-btn:hover {
+  background: #f0f0f0;
+}
+
+.route-btn.primary {
+  background: #0077cc;
+  color: white;
+  border-color: #0077cc;
+}
+
+.route-btn.primary:hover {
+  background: #005fa3;
+}
+
+.route-btn.danger:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  border-color: #ef4444;
+}
+
+.route-summary {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.route-summary-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85em;
+  padding: 2px 0;
+  color: #333;
+}
+
+.route-summary-label {
+  color: #666;
+}
+
+.route-summary-value {
+  font-weight: 600;
+}
+
+.route-loading {
+  padding: 10px 12px;
+  font-size: 0.82em;
+  color: #888;
+  font-style: italic;
+}
+
+.route-error {
+  padding: 10px 12px;
+  font-size: 0.82em;
+  color: #c0392b;
+  background: rgba(239, 68, 68, 0.07);
+  border-radius: 4px;
+  margin: 8px 12px;
+}

@@ -114,9 +114,59 @@ impl TryFrom<Locations> for Vec<Location> {
         Ok(match locs {
             Locations::LocationArray(locs) => locs,
             Locations::Array(coords) => coords.into_iter().map(Into::into).collect(),
-            Locations::Encoded(s) => router_polyline::decode(&s, 5)?
+            Locations::Encoded(s) => router_polyline::decode::<2>(&s, 5)?
                 .into_iter()
-                .map(Into::<Location>::into)
+                .map(Into::into)
+                .collect(),
+        })
+    }
+}
+
+impl Points {
+    pub fn array_from(points: impl IntoIterator<Item = impl Into<[f32; 2]>>) -> Self {
+        Self::Array(points.into_iter().map(Into::into).collect())
+    }
+
+    pub fn encoded_from(points: impl IntoIterator<Item = impl Into<[f32; 2]>>) -> Self {
+        Self::Encoded(router_polyline::encode(points.into_iter().map(Into::into), 5))
+    }
+
+    #[inline]
+    pub fn into_encoded(self) -> String {
+        match self {
+            Points::Array(coords) => router_polyline::encode(coords, 5),
+            Points::Encoded(s) => s,
+        }
+    }
+    #[inline]
+    pub fn try_into_array(self) -> Result<Vec<[f32; 2]>, router_polyline::Error> {
+        Ok(match self {
+            Points::Array(coords) => coords,
+            Points::Encoded(s) => router_polyline::decode(&s, 5)?,
+        })
+    }
+
+    #[inline]
+    pub fn encode<T: Into<[f32; 2]>>(points: impl IntoIterator<Item = T>) -> String {
+        router_polyline::encode(points.into_iter().map(Into::into), 5)
+    }
+}
+
+impl<I: Into<[f32; 2]>> FromIterator<I> for Points {
+    #[inline]
+    fn from_iter<T: IntoIterator<Item = I>>(iter: T) -> Self {
+        Self::Array(iter.into_iter().map(Into::into).collect())
+    }
+}
+
+impl<T: From<LatLon>> TryFrom<Points> for Vec<T> {
+    type Error = router_polyline::Error;
+    fn try_from(points: Points) -> Result<Self, router_polyline::Error> {
+        Ok(match points {
+            Points::Array(coords) => coords.into_iter().map(|arr| LatLon::from(arr).into()).collect(),
+            Points::Encoded(s) => router_polyline::decode::<2>(&s, 5)?
+                .into_iter()
+                .map(|arr| LatLon::from(arr).into())
                 .collect(),
         })
     }

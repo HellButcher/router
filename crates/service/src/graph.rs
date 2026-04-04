@@ -149,7 +149,13 @@ impl<C: CostModel> Iterator for WayIter<'_, C> {
     fn next(&mut self) -> Option<Edge> {
         loop {
             let way_idx = way_index_from_ptr(self.current_ptr)?;
-            let way = self.graph.ways.get(way_idx).ok()?;
+            let way = match self.graph.ways.get(way_idx) {
+                Ok(w) => w,
+                Err(e) => {
+                    tracing::warn!(way_idx, error = %e, "ways.get failed");
+                    return None;
+                }
+            };
 
             // Advance pointer before any early-continues.
             self.current_ptr = if self.reverse {
@@ -158,10 +164,8 @@ impl<C: CostModel> Iterator for WayIter<'_, C> {
                 way.next_way()
             };
 
-            // Respect oneway restrictions.
-            if !self.reverse && way.flags.contains(WayFlags::ONEWAY_REVERSE) {
-                continue;
-            }
+            // All stored ways are forward-directed; inbound traversal of a
+            // oneway is not permitted.
             if self.reverse && way.flags.contains(WayFlags::ONEWAY) {
                 continue;
             }
@@ -173,20 +177,23 @@ impl<C: CostModel> Iterator for WayIter<'_, C> {
             };
 
             // Look up the neighbour node table index via binary search on NodeId.
-            let neighbour_id = to_node;
             let all_nodes = match self.graph.nodes.get_all() {
                 Ok(s) => s,
                 Err(_) => continue,
             };
-            let neighbour_idx = match all_nodes.binary_search_by_key(&neighbour_id, |n| n.id) {
+            let neighbour_idx = match all_nodes.binary_search_by_key(&to_node, |n| n.id) {
                 Ok(i) => i,
-                Err(_) => continue,
+                Err(_) => {
+                    continue;
+                }
             };
 
             // Look up from-node for cost calculation.
             let from_idx = match all_nodes.binary_search_by_key(&from_node, |n| n.id) {
                 Ok(i) => i,
-                Err(_) => continue,
+                Err(_) => {
+                    continue;
+                }
             };
             let from = &all_nodes[from_idx];
             let to = &all_nodes[neighbour_idx];

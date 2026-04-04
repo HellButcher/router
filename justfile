@@ -34,5 +34,5 @@ import pbf='../osm-pbf-benchmark/ireland-and-northern-ireland-latest.osm.pbf':
     cargo run --release -- import {{pbf}}
     
 serve: build
-    cargo run --release
+    cargo run --release serve
 

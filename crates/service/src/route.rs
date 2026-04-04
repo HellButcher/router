@@ -5,6 +5,8 @@ use router_types::bbox::BoundingBox;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+use router_algorithm::Graph;
+
 use crate::{
     error::{Error, Result},
     graph::{RoadGraph, TravelTimeCost, haversine_m},
@@ -135,20 +137,30 @@ impl Service {
 
         // Snap each location to the nearest node.
         let all_nodes = self.nodes.get_all().map_err(Error::StorageError)?;
+        tracing::debug!(total_nodes = all_nodes.len(), "snapping locations");
         let mut snapped: Vec<usize> = Vec::with_capacity(locations.len());
         for loc in &locations {
-            let node_idx = self
+            let (node_idx, _lat, _lon, _dist) = self
                 .spatial
                 .nearest(loc.lat, loc.lon, self.max_radius_m)
-                .map(|(idx, _, _, _)| idx as usize)
                 .ok_or_else(|| {
                     Error::InvalidRequest(format!(
                         "no routable node found near ({}, {})",
                         loc.lat, loc.lon
                     ))
                 })?;
-            snapped.push(node_idx);
+            snapped.push(node_idx as usize);
         }
+
+        // Use snapped node positions as the canonical waypoint locations.
+        let snapped_locations: Vec<Location> = snapped
+            .iter()
+            .map(|&idx| Location {
+                id: Some(all_nodes[idx].id.0.to_string()),
+                coordinate: all_nodes[idx].pos,
+                ..Default::default()
+            })
+            .collect();
 
         // Route leg by leg (one leg per consecutive location pair).
         let mut legs: Vec<Leg> = Vec::with_capacity(snapped.len() - 1);
@@ -158,7 +170,6 @@ impl Service {
 
         for window in snapped.windows(2) {
             let (start, goal) = (window[0], window[1]);
-
             let graph = RoadGraph {
                 nodes: &self.nodes,
                 ways: &self.ways,
@@ -166,7 +177,20 @@ impl Service {
                 goal_pos: all_nodes[goal].pos,
             };
 
-            let (path_nodes, cost_ms) = a_star(&graph, start, goal).ok_or(Error::NoRoute)?;
+            let Some((path_nodes, cost_ms)) = a_star(&graph, start, goal) else {
+                return Ok(RouteResponse {
+                    id: request.id,
+                    profile: profile.name.to_owned(),
+                    units,
+                    locations: snapped_locations,
+                    trip_summary: Summary {
+                        duration: Duration::ZERO,
+                        length: 0,
+                        bounds: BoundingBox::VOID,
+                    },
+                    legs: Vec::new(),
+                });
+            };
 
             // Build geometry and compute leg metrics.
             let mut leg_bounds = BoundingBox::VOID;
@@ -193,7 +217,7 @@ impl Service {
                     length: leg_length_m,
                     bounds: leg_bounds,
                 },
-                path: Points::Array(coords.into_iter().map(Into::into).collect()),
+                path: Points::encoded_from(coords),
                 maneuvers: Vec::new(), // TODO: maneuver generation
             });
         }
@@ -202,7 +226,7 @@ impl Service {
             id: request.id,
             profile: profile.name.to_owned(),
             units,
-            locations,
+            locations: snapped_locations,
             trip_summary: Summary {
                 duration: Duration::from_millis(trip_duration_ms),
                 length: trip_length_m,

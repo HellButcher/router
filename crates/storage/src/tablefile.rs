@@ -255,6 +255,17 @@ impl<D: TableData> TableFile<D> {
     }
 
     #[inline]
+    pub fn len(&self) -> usize {
+        let mmap = self.get_mmap_grow_full().unwrap();
+        (mmap.len() - Self::HEADER_SIZE) / Self::DATA_SIZE
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    #[inline]
     pub fn get(&self, index: usize) -> Result<Ref<'_, D>> {
         let Ref(mmap, slice) = self.get_slice(index, 1)?;
         Ok(Ref(mmap, unsafe {

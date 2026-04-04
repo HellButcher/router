@@ -7,8 +7,6 @@ bitflags! {
     pub struct WayFlags: u8 {
         /// Way is only traversable from → to (forward direction).
         const ONEWAY         = 0b0000_0001;
-        /// Way is only traversable to → from (reverse direction).
-        const ONEWAY_REVERSE = 0b0000_0010;
         /// Motor vehicles not allowed.
         const NO_MOTOR       = 0b0000_0100;
         /// HGV (heavy goods vehicles) not allowed.

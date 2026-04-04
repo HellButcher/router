@@ -160,14 +160,29 @@ impl<R: io::BufRead + Send> Importer<R> {
                         let highway = highway_class(way_tags.highway);
                         let flags = way_flags(&way_tags);
                         let max_speed = way_tags.max_speed.unwrap_or(0);
-                        let mut refs = w.refs().iter();
+                        let is_oneway = flags.contains(WayFlags::ONEWAY);
+                        let is_reverse = is_oneway_reverse(&way_tags);
+                        let mut refs = w.refs();
                         if let Some(mut current) = refs.next() {
                             for next in refs {
-                                let mut way = Way::new(id, NodeId(current), NodeId(next));
+                                let (a, b) = if is_reverse {
+                                    (NodeId(next), NodeId(current))
+                                } else {
+                                    (NodeId(current), NodeId(next))
+                                };
+                                let mut way = Way::new(id, a, b);
                                 way.highway = highway;
                                 way.flags = flags;
                                 way.max_speed = max_speed;
                                 ways.push(way);
+                                // For bidirectional roads also create the reverse edge.
+                                if !is_oneway && !is_reverse {
+                                    let mut rev = Way::new(id, b, a);
+                                    rev.highway = highway;
+                                    rev.flags = flags;
+                                    rev.max_speed = max_speed;
+                                    ways.push(rev);
+                                }
                                 current = next;
                             }
                         }
@@ -195,8 +210,13 @@ impl<R: io::BufRead + Send> Importer<R> {
             let ways_slice = ways.get_all().map_err(Error::WriteError)?;
             let nodes_slice: &[Node] = &nodes_slice;
             let ways_slice: &[Way] = &ways_slice;
+            tracing::info!(
+                nodes = nodes_slice.len(),
+                ways = ways_slice.len(),
+                "linking"
+            );
             ways_slice.par_iter().enumerate().for_each(|(i, way)| {
-                link_nodes_and_ways(&nodes_slice, i, way);
+                link_nodes_and_ways(nodes_slice, i, way);
             });
         }
 
@@ -206,10 +226,10 @@ impl<R: io::BufRead + Send> Importer<R> {
             nodes
                 .filter(Node::is_connected)
                 .map_err(Error::WriteError)?;
+            tracing::info!(nodes = nodes.len(), ways = ways.len(), "filtered");
         }
 
-        tracing::info!("linked nodes and ways");
-
+        tracing::info!("flush nodes and ways");
         nodes.flush().map_err(Error::WriteError)?;
         ways.flush().map_err(Error::WriteError)?;
 
@@ -261,18 +281,18 @@ fn highway_class(highway: Option<tags::Highway>) -> HighwayClass {
     }
 }
 
+fn is_oneway_reverse(tags: &tags::WayTags<'_>) -> bool {
+    use tags::{Conditional, OneWay};
+    matches!(&tags.oneway, Conditional::Simple(OneWay::reverse))
+}
+
 fn way_flags(tags: &tags::WayTags<'_>) -> WayFlags {
     use tags::{Conditional, OneWay};
     let mut flags = WayFlags::empty();
 
-    // Oneway
-    let is_oneway = matches!(&tags.oneway, Conditional::Simple(OneWay::yes));
-    let is_reverse = matches!(&tags.oneway, Conditional::Simple(OneWay::reverse));
-    if is_oneway {
+    // Oneway (reverse is handled by swapping from/to nodes in the caller)
+    if matches!(&tags.oneway, Conditional::Simple(OneWay::yes)) {
         flags |= WayFlags::ONEWAY;
-    }
-    if is_reverse {
-        flags |= WayFlags::ONEWAY_REVERSE;
     }
 
     // Motor vehicle / HGV restrictions based on highway class
