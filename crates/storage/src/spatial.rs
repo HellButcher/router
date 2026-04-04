@@ -52,12 +52,13 @@ pub const DEFAULT_CHUNK_SIZE: usize = 16 * 1024 * 1024;
 /// One node in the flat tree array (24 bytes, 8-byte aligned).
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-pub(crate) struct RTreeEntry {
+pub struct RTreeEntry {
     pub min_lat: f32,
     pub min_lon: f32,
     pub max_lat: f32,
     pub max_lon: f32,
-    /// Leaf: index into the node table.  Internal: 0 (unused).
+    /// Leaf: payload index (node table index for node spatial index,
+    /// way table index for edge spatial index).  Internal: 0 (unused).
     pub index: u64,
 }
 
@@ -65,7 +66,7 @@ unsafe impl TablePod for RTreeEntry {}
 
 const _: () = {
     assert!(size_of::<RTreeEntry>() == 24);
-    assert!(size_of::<RTreeEntry>() % std::mem::align_of::<RTreeEntry>() == 0);
+    assert!(size_of::<RTreeEntry>().is_multiple_of(std::mem::align_of::<RTreeEntry>()));
 };
 
 /// File header (no trailing padding field; zeros appended during write).
@@ -130,7 +131,7 @@ impl SpatialIndex {
         for i in 0..num_levels {
             let byte_off = hdr.level_offsets[i] as usize;
             if byte_off < HEADER_DISK_SIZE
-                || (byte_off - HEADER_DISK_SIZE) % size_of::<RTreeEntry>() != 0
+                || !(byte_off - HEADER_DISK_SIZE).is_multiple_of(size_of::<RTreeEntry>())
             {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -167,18 +168,33 @@ impl SpatialIndex {
         }
     }
 
-    /// Find the nearest node within `max_radius_m` metres of `(lat, lon)`.
+    /// Find the nearest item within `max_radius_m` metres of `(lat, lon)`.
     ///
-    /// Returns `(node_table_index, snapped_lat, snapped_lon, distance_m)` or `None`.
-    /// The snapped coordinate is the node's exact position (leaf bbox min == max).
-    pub fn nearest(&self, lat: f32, lon: f32, max_radius_m: f32) -> Option<(u64, f32, f32, f32)> {
+    /// The R-tree traversal uses [`min_dist_to_bbox_m`] as an admissible lower
+    /// bound on the true distance to any item inside a bounding box.  When a
+    /// leaf entry is dequeued, `refine(entry, bbox_dist)` is called to compute
+    /// the exact distance and produce the result payload.  Return `None` from
+    /// `refine` to skip the entry.
+    ///
+    /// Because bbox distance ≤ true distance, the search continues until the
+    /// heap minimum exceeds the best true distance found so far — guaranteeing
+    /// the global nearest result even when leaf bboxes are larger than points
+    /// (e.g. way segments).
+    pub fn nearest_refined<T>(
+        &self,
+        lat: f32,
+        lon: f32,
+        max_radius_m: f32,
+        refine: impl Fn(&RTreeEntry, f32) -> Option<(f32, T)>,
+    ) -> Option<T> {
         if self.num_items == 0 || self.num_levels == 0 {
             return None;
         }
         let entries = self.entries();
-        // Min-heap keyed by f32 distance bits.
-        // IEEE 754 positive floats sort correctly as u32 bit patterns.
+        // Min-heap keyed on IEEE 754 distance bits (positive floats compare
+        // correctly as u32 bit patterns).
         let mut heap: BinaryHeap<(Reverse<u32>, usize, usize)> = BinaryHeap::new();
+        let mut best: Option<(f32, T)> = None;
 
         let root = self.num_levels - 1;
         let root_start = self.level_start(root);
@@ -190,14 +206,20 @@ impl SpatialIndex {
         }
 
         while let Some((Reverse(bits), idx, level)) = heap.pop() {
-            let d = f32::from_bits(bits);
-            if d > max_radius_m {
+            let bbox_dist = f32::from_bits(bits);
+            // Lower bound already exceeds the best true distance: done.
+            let cutoff = best.as_ref().map_or(max_radius_m, |(d, _)| *d);
+            if bbox_dist > cutoff {
                 break;
             }
             let e = &entries[idx];
             if level == 0 {
-                // Leaf bbox is a point: min_lat == max_lat == node lat.
-                return Some((e.index, e.min_lat, e.min_lon, d));
+                if let Some((true_dist, payload)) = refine(e, bbox_dist) {
+                    if true_dist <= cutoff {
+                        best = Some((true_dist, payload));
+                    }
+                }
+                continue;
             }
             let child_level = level - 1;
             let local = idx - self.level_start(level);
@@ -205,12 +227,23 @@ impl SpatialIndex {
             let child_end = (child_start + self.node_size).min(self.level_start(level));
             for ci in child_start..child_end {
                 let d = min_dist_to_bbox_m(lat, lon, &entries[ci]);
-                if d <= max_radius_m {
+                if d <= cutoff {
                     heap.push((Reverse(d.to_bits()), ci, child_level));
                 }
             }
         }
-        None
+        best.map(|(_, payload)| payload)
+    }
+
+    /// Find the nearest **node** within `max_radius_m` metres of `(lat, lon)`.
+    ///
+    /// Returns `(node_table_index, snapped_lat, snapped_lon, distance_m)`.
+    /// Node leaf bboxes are points (`min == max`), so bbox distance equals true
+    /// distance and the first leaf dequeued is always the nearest.
+    pub fn nearest(&self, lat: f32, lon: f32, max_radius_m: f32) -> Option<(u64, f32, f32, f32)> {
+        self.nearest_refined(lat, lon, max_radius_m, |e, d| {
+            Some((d, (e.index, e.min_lat, e.min_lon, d)))
+        })
     }
 }
 
@@ -238,12 +271,17 @@ impl SpatialIndexBuilder {
 
     /// Build the index and write it to `path`.
     ///
-    /// `get_coord(i)` returns `(lat, lon)` for item `i`; may be a closure
-    /// over a mmap'd node slice — no bulk copy of coordinates is performed.
-    /// Must be `Sync` so rayon can share it across chunk-sort threads.
-    pub fn build<P, F>(&self, count: usize, get_coord: F, path: P) -> io::Result<()>
+    /// `get_bbox(i)` returns `(min_lat, min_lon, max_lat, max_lon)` for item
+    /// `i`.  For point items (nodes) pass `(lat, lon, lat, lon)`.  For line
+    /// segments (ways) pass the segment's bounding box.  Morton-curve ordering
+    /// uses the bbox centre, so spatially close items end up in the same leaf.
+    ///
+    /// The closure may be a reference to a mmap'd slice — no bulk copy of
+    /// coordinates is performed.  Must be `Sync` so rayon can share it across
+    /// chunk-sort threads.
+    pub fn build<P, F>(&self, count: usize, get_bbox: F, path: P) -> io::Result<()>
     where
-        F: Fn(usize) -> (f32, f32) + Sync,
+        F: Fn(usize) -> (f32, f32, f32, f32) + Sync,
         P: AsRef<Path>,
     {
         let path = path.as_ref();
@@ -264,7 +302,7 @@ impl SpatialIndexBuilder {
             self.node_size as usize,
             self.chunk_size,
             count,
-            &get_coord,
+            &get_bbox,
             out,
             run_file,
         );
@@ -285,12 +323,12 @@ fn build_impl<F>(
     node_size: usize,
     chunk_size: usize,
     count: usize,
-    get_coord: &F,
+    get_bbox: &F,
     file: File,
     run_file: File,
 ) -> io::Result<()>
 where
-    F: Fn(usize) -> (f32, f32) + Sync,
+    F: Fn(usize) -> (f32, f32, f32, f32) + Sync,
 {
     // ── layout ────────────────────────────────────────────────────────────────
     let level_lens = compute_level_lens(count, node_size);
@@ -348,17 +386,17 @@ where
             count,
             chunk_size,
             |i| {
-                let (lat, lon) = get_coord(i);
-                morton_world(lat, lon)
+                let (min_lat, min_lon, max_lat, max_lon) = get_bbox(i);
+                morton_world((min_lat + max_lat) * 0.5, (min_lon + max_lon) * 0.5)
             },
             run_file,
             |idx| {
-                let (lat, lon) = get_coord(idx as usize);
+                let (min_lat, min_lon, max_lat, max_lon) = get_bbox(idx as usize);
                 level0[out_idx] = RTreeEntry {
-                    min_lat: lat,
-                    min_lon: lon,
-                    max_lat: lat,
-                    max_lon: lon,
+                    min_lat,
+                    min_lon,
+                    max_lat,
+                    max_lon,
                     index: idx,
                 };
                 out_idx += 1;
@@ -472,7 +510,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("spatial.bin");
         SpatialIndexBuilder::with_options(DEFAULT_NODE_SIZE, chunk_size)
-            .build(items.len(), |i| (items[i].0, items[i].1), &path)
+            .build(
+                items.len(),
+                |i| (items[i].0, items[i].1, items[i].0, items[i].1),
+                &path,
+            )
             .unwrap();
         (SpatialIndex::open(&path).unwrap(), dir)
     }

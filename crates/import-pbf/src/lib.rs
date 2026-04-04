@@ -259,19 +259,50 @@ impl<R: io::BufRead + Send> Importer<R> {
         nodes.flush().map_err(Error::WriteError)?;
         ways.flush().map_err(Error::WriteError)?;
 
-        tracing::info!("building spatial index");
+        tracing::info!("building spatial indices");
         {
-            let _span = tracing::info_span!("build_spatial_index").entered();
             let nodes_ref = nodes.get_all().map_err(Error::WriteError)?;
-            // Deref to &[Node] (Sync) so the closure can be shared across rayon threads.
-            let nodes: &[Node] = &*nodes_ref;
-            SpatialIndexBuilder::new()
-                .build(
-                    nodes.len(),
-                    |i| (nodes[i].pos.lat, nodes[i].pos.lon),
-                    self.target_dir.join("spatial.bin"),
-                )
-                .map_err(Error::WriteError)?;
+            let ways_ref = ways.get_all().map_err(Error::WriteError)?;
+            // Deref to plain slices (Sync) so closures can be shared across rayon threads.
+            let nodes_s: &[Node] = &nodes_ref;
+            let ways_s: &[Way] = &ways_ref;
+
+            // Node spatial index: each entry is a point bbox.
+            {
+                let _span = tracing::info_span!("build_node_spatial_index").entered();
+                SpatialIndexBuilder::new()
+                    .build(
+                        nodes_s.len(),
+                        |i| {
+                            let p = nodes_s[i].pos;
+                            (p.lat, p.lon, p.lat, p.lon)
+                        },
+                        self.target_dir.join("spatial.bin"),
+                    )
+                    .map_err(Error::WriteError)?;
+            }
+
+            // Edge spatial index: each entry is the bounding box of a way segment.
+            // from_node_idx / to_node_idx hold resolved table indices at this point.
+            {
+                let _span = tracing::info_span!("build_edge_spatial_index").entered();
+                SpatialIndexBuilder::new()
+                    .build(
+                        ways_s.len(),
+                        |i| {
+                            let from = nodes_s[ways_s[i].from_node_idx as usize].pos;
+                            let to = nodes_s[ways_s[i].to_node_idx as usize].pos;
+                            (
+                                from.lat.min(to.lat),
+                                from.lon.min(to.lon),
+                                from.lat.max(to.lat),
+                                from.lon.max(to.lon),
+                            )
+                        },
+                        self.target_dir.join("edge_spatial.bin"),
+                    )
+                    .map_err(Error::WriteError)?;
+            }
         }
 
         tracing::info!("flushed");
