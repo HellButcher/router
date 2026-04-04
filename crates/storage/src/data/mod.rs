@@ -82,8 +82,7 @@ pub fn link_nodes_and_ways(nodes: &[Node], way_index: usize, way: &Way) {
         // TODO: mark way as border
     };
 
-    if let Ok(node_to_index) =
-        nodes.binary_search_by_key(&NodeId(way.to_node_idx as i64), |n| n.id)
+    if let Ok(node_to_index) = nodes.binary_search_by_key(&NodeId(way.to_node_idx as i64), |n| n.id)
     {
         let mut current = NO_WAY;
         while let Err(old) = nodes[node_to_index].first_way_reverse.compare_exchange(

@@ -7,7 +7,7 @@ pub struct ServeArgs {
     #[clap(default_value = "127.0.0.1:5173")]
     pub listen: String,
 
-    /// Path to the storage directory (must contain spatial.bin from a prior import)
+    /// Path to the storage directory (must contain node_spatial.bin and edge_spatial.bin from a prior import)
     #[clap(long, default_value = "storage")]
     pub storage_dir: PathBuf,
 }

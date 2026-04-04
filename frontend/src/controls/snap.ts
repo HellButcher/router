@@ -30,8 +30,8 @@ export class SnapControl implements IControl {
     const button = document.createElement("button");
     button.className = "maplibregl-ctrl-snap";
     button.type = "button";
-    button.title = "Snap to nearest node";
-    button.ariaLabel = "Snap to nearest node";
+    button.title = "Snap to nearest edge";
+    button.ariaLabel = "Snap to nearest edge";
     const icon = document.createElement("span");
     icon.className = "maplibregl-ctrl-icon";
     icon.ariaHidden = "true";
@@ -90,7 +90,7 @@ export class SnapControl implements IControl {
 
     try {
       const { data } = await client.POST("/api/v1/locate", {
-        body: { locations: [{ lat, lon: lng }] },
+        body: { locations: [{ lat, lon: lng }], snap_mode: "Edge" },
         signal: ac.signal,
       });
       const loc = data?.locations?.[0];

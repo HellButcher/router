@@ -48,6 +48,14 @@ pub struct Location {
     )]
     pub way_id: Option<NonZeroU64>,
 
+    /// Fraction along the snapped way segment (0.0 = from-node, 1.0 = to-node).
+    /// Only present for [`SnapMode::Edge`] snaps.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub fraction: Option<f32>,
+
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -128,7 +136,10 @@ impl Points {
     }
 
     pub fn encoded_from(points: impl IntoIterator<Item = impl Into<[f32; 2]>>) -> Self {
-        Self::Encoded(router_polyline::encode(points.into_iter().map(Into::into), 5))
+        Self::Encoded(router_polyline::encode(
+            points.into_iter().map(Into::into),
+            5,
+        ))
     }
 
     #[inline]
@@ -163,7 +174,10 @@ impl<T: From<LatLon>> TryFrom<Points> for Vec<T> {
     type Error = router_polyline::Error;
     fn try_from(points: Points) -> Result<Self, router_polyline::Error> {
         Ok(match points {
-            Points::Array(coords) => coords.into_iter().map(|arr| LatLon::from(arr).into()).collect(),
+            Points::Array(coords) => coords
+                .into_iter()
+                .map(|arr| LatLon::from(arr).into())
+                .collect(),
             Points::Encoded(s) => router_polyline::decode::<2>(&s, 5)?
                 .into_iter()
                 .map(|arr| LatLon::from(arr).into())

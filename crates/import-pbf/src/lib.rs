@@ -277,7 +277,7 @@ impl<R: io::BufRead + Send> Importer<R> {
                             let p = nodes_s[i].pos;
                             (p.lat, p.lon, p.lat, p.lon)
                         },
-                        self.target_dir.join("spatial.bin"),
+                        self.target_dir.join("node_spatial.bin"),
                     )
                     .map_err(Error::WriteError)?;
             }

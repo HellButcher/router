@@ -8,6 +8,7 @@ pub mod locate;
 pub mod matrix;
 pub mod profile;
 pub mod route;
+pub mod snap;
 
 use crate::error::{Error, Result};
 use profile::{PROFILES, Profile};
@@ -19,7 +20,7 @@ use router_storage::{
 
 /// Options for creating a [`Service`].
 pub struct ServiceOptions {
-    /// Path to the storage directory (must contain `spatial.bin`, `nodes.bin`, `ways.bin`).
+    /// Path to the storage directory (must contain `node_spatial.bin`, `edge_spatial.bin`, `nodes.bin`, `ways.bin`).
     pub storage_dir: PathBuf,
     /// Maximum locate search radius in metres.
     pub max_radius_m: f32,
@@ -37,6 +38,7 @@ impl Default for ServiceOptions {
 pub struct Service {
     profiles: Vec<&'static Profile>,
     pub(crate) spatial: SpatialIndex,
+    pub(crate) edge_spatial: SpatialIndex,
     pub(crate) nodes: TableFile<Node>,
     pub(crate) ways: TableFile<Way>,
     pub(crate) max_radius_m: f32,
@@ -44,12 +46,14 @@ pub struct Service {
 
 impl Service {
     pub fn open(options: ServiceOptions) -> io::Result<Self> {
-        let spatial = SpatialIndex::open(options.storage_dir.join("spatial.bin"))?;
+        let spatial = SpatialIndex::open(options.storage_dir.join("node_spatial.bin"))?;
+        let edge_spatial = SpatialIndex::open(options.storage_dir.join("edge_spatial.bin"))?;
         let nodes = TableFile::<Node>::open_read_only(options.storage_dir.join("nodes.bin"))?;
         let ways = TableFile::<Way>::open_read_only(options.storage_dir.join("ways.bin"))?;
         Ok(Self {
             profiles: PROFILES.to_vec(),
             spatial,
+            edge_spatial,
             nodes,
             ways,
             max_radius_m: options.max_radius_m,
