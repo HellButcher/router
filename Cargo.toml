@@ -36,6 +36,9 @@ clap-verbosity-flag = { version = "3.0", default-features = false }
 clap_mangen = "0.3"
 anyhow = "1.0"
 
+# Parallelism
+rayon = "1.10"
+
 # Data structures & utilities
 bitflags = "2.11"
 bytemuck = "1.25"

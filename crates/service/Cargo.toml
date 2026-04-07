@@ -13,6 +13,7 @@ schemars = ["dep:schemars", "router-types/schemars"]
 [dependencies]
 tracing.workspace = true
 thiserror.workspace = true
+rayon.workspace = true
 
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }

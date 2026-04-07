@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    collections::{BinaryHeap, HashMap, hash_map::Entry},
+    collections::{BinaryHeap, HashMap, HashSet, hash_map::Entry},
 };
 
 use crate::{Graph, reconstruct_path};
@@ -27,12 +27,17 @@ impl PartialOrd for HeapState {
     }
 }
 
-/// Run Dijkstra's algorithm from `start` to `goal` on `graph`.
+/// Core Dijkstra loop with a caller-supplied stop condition.
 ///
-/// Returns `Some((path, cost))` where `path` is the sequence of node indices
-/// from `start` to `goal` (inclusive) and `cost` is the total edge cost.
-/// Returns `None` if no path exists.
-pub fn dikstra(graph: impl Graph, start: usize, goal: usize) -> Option<(Vec<usize>, usize)> {
+/// The `stop` closure is called each time a node is settled (with its optimal
+/// cost confirmed).  When it returns `true` the search terminates immediately.
+///
+/// Returns the settled distances and predecessor map for all visited nodes.
+pub fn dijkstra_with_stop_condition(
+    graph: impl Graph,
+    start: usize,
+    mut stop: impl FnMut(usize) -> bool,
+) -> (HashMap<usize, usize>, HashMap<usize, usize>) {
     let mut dist: HashMap<usize, usize> = HashMap::new();
     let mut predecessors: HashMap<usize, usize> = HashMap::new();
     let mut heap = BinaryHeap::new();
@@ -44,35 +49,75 @@ pub fn dikstra(graph: impl Graph, start: usize, goal: usize) -> Option<(Vec<usiz
     });
 
     while let Some(HeapState { cost, position }) = heap.pop() {
-        if position == goal {
-            let path = reconstruct_path(&predecessors, start, goal);
-            return Some((path, cost));
-        }
         let old_cost = dist[&position];
+        // Stale-entry check must come before the stop condition: if `stop` has
+        // side effects (e.g. counting settled targets for SSMT), calling it on
+        // a stale entry would act on a cost that is not yet optimal.
         if cost > old_cost {
             continue;
         }
+        if stop(position) {
+            break;
+        }
         for edge in graph.outbound(position) {
             let next_cost = cost + edge.cost;
-            let next = HeapState {
-                cost: next_cost,
-                position: edge.node,
-            };
-            match dist.entry(next.position) {
+            match dist.entry(edge.node) {
                 Entry::Occupied(mut e) if next_cost < *e.get() => {
                     e.insert(next_cost);
-                    predecessors.insert(next.position, position);
-                    heap.push(next);
+                    predecessors.insert(edge.node, position);
+                    heap.push(HeapState {
+                        cost: next_cost,
+                        position: edge.node,
+                    });
                 }
                 Entry::Vacant(e) => {
                     e.insert(next_cost);
-                    predecessors.insert(next.position, position);
-                    heap.push(next);
+                    predecessors.insert(edge.node, position);
+                    heap.push(HeapState {
+                        cost: next_cost,
+                        position: edge.node,
+                    });
                 }
                 _ => {}
             }
         }
     }
 
-    None
+    (dist, predecessors)
+}
+
+/// Run Dijkstra's algorithm from `start` to `goal` on `graph`.
+///
+/// Returns `Some((path, cost))` where `path` is the sequence of node indices
+/// from `start` to `goal` (inclusive) and `cost` is the total edge cost.
+/// Returns `None` if no path exists.
+pub fn dikstra(graph: impl Graph, start: usize, goal: usize) -> Option<(Vec<usize>, usize)> {
+    let (dist, predecessors) = dijkstra_with_stop_condition(graph, start, |pos| pos == goal);
+    let cost = *dist.get(&goal)?;
+    let path = reconstruct_path(&predecessors, start, goal);
+    Some((path, cost))
+}
+
+/// Run single-source, multi-target Dijkstra from `start` on `graph`.
+///
+/// Explores outbound edges until all `targets` are settled (or the graph is
+/// exhausted).  Returns the settled cost for every reachable node and the
+/// predecessor map needed for path reconstruction.
+pub fn dijkstra_ssmt(
+    graph: impl Graph,
+    start: usize,
+    targets: &HashSet<usize>,
+) -> (HashMap<usize, usize>, HashMap<usize, usize>) {
+    if targets.is_empty() {
+        return (HashMap::new(), HashMap::new());
+    }
+    let mut remaining = targets.len();
+    dijkstra_with_stop_condition(graph, start, |pos| {
+        if targets.contains(&pos) {
+            remaining -= 1;
+            remaining == 0
+        } else {
+            false
+        }
+    })
 }

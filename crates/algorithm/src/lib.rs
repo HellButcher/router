@@ -43,7 +43,7 @@ impl<G: Graph> Graph for &G {
 /// Reconstruct a path from a predecessor map produced by a search algorithm.
 ///
 /// Returns the node indices in order from `start` to `goal`.
-pub(crate) fn reconstruct_path(
+pub fn reconstruct_path(
     predecessors: &std::collections::HashMap<usize, usize>,
     start: usize,
     goal: usize,

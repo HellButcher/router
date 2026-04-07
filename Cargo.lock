@@ -1162,6 +1162,7 @@ dependencies = [
 name = "router-service"
 version = "0.1.0-alpha"
 dependencies = [
+ "rayon",
  "router-algorithm",
  "router-polyline",
  "router-storage",

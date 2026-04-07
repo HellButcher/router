@@ -199,6 +199,13 @@ pub async fn inspect(
     Ok(Json(service.inspect(request.0).await?))
 }
 
+pub async fn matrix(
+    service: ServiceState,
+    request: Json<router_service::matrix::MatrixRequest>,
+) -> Result<Json<router_service::matrix::MatrixResponse>> {
+    Ok(Json(service.calculate_matrix(request.0).await?))
+}
+
 make_router! {
     paths {
         "/info" {
@@ -255,6 +262,22 @@ make_router! {
                 response: {
                     description: "Node or way meta information"
                     type: crate::Result<axum::response::Json<router_service::inspect::InspectResponse>>
+                }
+            }
+        },
+        "/matrix" {
+            post => matrix {
+                sumary: "Calculate travel times and distances between multiple origins and destinations"
+                parameters: [
+                    {
+                        name: request
+                        description: "The matrix request body"
+                        type: axum::extract::Json<router_service::matrix::MatrixRequest>
+                    }
+                ]
+                response: {
+                    description: "Matrix of travel summaries for each reachable (from, to) pair"
+                    type: crate::Result<axum::response::Json<router_service::matrix::MatrixResponse>>
                 }
             }
         }
