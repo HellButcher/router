@@ -5,7 +5,10 @@ use router_storage::{
 };
 use router_types::coordinate::LatLon;
 
-use crate::graph::haversine_m;
+use crate::{
+    graph::{haversine_m, way_is_blocked},
+    profile::VehicleType,
+};
 
 // ── Snap ──────────────────────────────────────────────────────────────────────
 
@@ -54,12 +57,24 @@ pub struct EdgeSnapper<'a> {
 impl<'a> EdgeSnapper<'a> {
     /// Snap `(lat, lon)` to the nearest point on any way segment within
     /// `max_radius_m` metres.
-    pub fn snap_to_edge(&self, lat: f32, lon: f32, max_radius_m: f32) -> Option<EdgeSnap> {
+    ///
+    /// When `restrict_to` is `Some(vehicle)`, ways that are inaccessible for
+    /// that vehicle type are skipped.
+    pub fn snap_to_edge(
+        &self,
+        lat: f32,
+        lon: f32,
+        max_radius_m: f32,
+        restrict_to: Option<VehicleType>,
+    ) -> Option<EdgeSnap> {
         let p = LatLon(lat, lon);
         self.edge_spatial
             .nearest_refined(lat, lon, max_radius_m, |entry, _bbox_dist| {
                 let way_idx = entry.index as usize;
                 let way = self.ways.get(way_idx).ok()?;
+                if restrict_to.is_some_and(|v| way_is_blocked(&way, v)) {
+                    return None;
+                }
                 let from = self.nodes.get(way.from_node_idx as usize).ok()?;
                 let to = self.nodes.get(way.to_node_idx as usize).ok()?;
                 let (snapped, fraction) = project_onto_segment(p, from.pos, to.pos);

@@ -11,6 +11,7 @@ pub use super::common::Points;
 use super::{
     Service,
     common::{Location, Locations, Unit},
+    profile::VehicleType,
 };
 
 // ── SnapMode ──────────────────────────────────────────────────────────────────
@@ -47,6 +48,11 @@ pub struct LocateRequest {
     /// Defaults to `false` to keep responses small.
     #[cfg_attr(feature = "serde", serde(default))]
     pub with_meta: bool,
+    /// When `true` and `snap_mode` is [`SnapMode::Edge`], ways that are
+    /// inaccessible for the selected profile are skipped during snapping.
+    /// Defaults to `false`.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub filter_by_profile: bool,
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -84,10 +90,13 @@ pub struct LocateResponse {
 impl Service {
     /// Snap each input coordinate to the nearest routable position.
     pub async fn locate(&self, request: LocateRequest) -> Result<LocateResponse> {
-        let profile = self
-            .get_opt_profile(request.profile.as_deref())?
-            .name
-            .to_owned();
+        let profile = self.get_opt_profile(request.profile.as_deref())?;
+        let profile_name = profile.name.to_owned();
+        let restrict_to: Option<VehicleType> = if request.filter_by_profile {
+            Some(profile.vehicle_type)
+        } else {
+            None
+        };
         let mut locations: Vec<Location> = request.locations.try_into()?;
 
         let max_radius_m = self.max_radius_m;
@@ -114,7 +123,9 @@ impl Service {
                     }
                 }
                 SnapMode::Edge => {
-                    if let Some(snap) = snapper.snap_to_edge(loc.lat, loc.lon, max_radius_m) {
+                    if let Some(snap) =
+                        snapper.snap_to_edge(loc.lat, loc.lon, max_radius_m, restrict_to)
+                    {
                         loc.coordinate = snap.pos;
                         loc.way_id = NonZeroU64::new(snap.way_id);
                         loc.fraction = Some(snap.fraction);
@@ -130,7 +141,7 @@ impl Service {
 
         Ok(LocateResponse {
             id: request.id,
-            profile,
+            profile: profile_name,
             units: request.units,
             locations,
         })

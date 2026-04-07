@@ -217,7 +217,7 @@ impl<C: CostModel> Iterator for WayIter<'_, C> {
 // ── Geometry helpers ──────────────────────────────────────────────────────────
 
 /// Returns whether a way is blocked for the given vehicle type based on its flags.
-fn way_is_blocked(way: &Way, vehicle: VehicleType) -> bool {
+pub(crate) fn way_is_blocked(way: &Way, vehicle: VehicleType) -> bool {
     match vehicle {
         VehicleType::Car => way.flags.contains(WayFlags::NO_MOTOR),
         VehicleType::Hgv => {

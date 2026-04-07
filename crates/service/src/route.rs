@@ -200,7 +200,12 @@ impl Service {
                         pos: router_types::coordinate::LatLon(lat, lon),
                     }),
                 SnapMode::Edge => snapper
-                    .snap_to_edge(loc.lat, loc.lon, self.max_radius_m)
+                    .snap_to_edge(
+                        loc.lat,
+                        loc.lon,
+                        self.max_radius_m,
+                        Some(profile.vehicle_type),
+                    )
                     .map(Snap::Edge),
             };
             snaps.push(snap.ok_or_else(|| {
