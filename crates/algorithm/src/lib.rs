@@ -1,4 +1,6 @@
 pub mod a_star;
+pub mod bidir_a_star;
+pub mod bidir_dijkstra;
 pub mod dikstra;
 
 pub struct Edge {

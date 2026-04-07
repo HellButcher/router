@@ -1,7 +1,9 @@
 use std::num::NonZeroU64;
 use std::time::Duration;
 
-use router_algorithm::a_star::a_star;
+use router_algorithm::{
+    a_star::a_star, bidir_a_star::bidir_a_star, bidir_dijkstra::bidir_dijkstra, dikstra::dikstra,
+};
 use router_types::bbox::BoundingBox;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -20,6 +22,39 @@ use super::{
     common::{Location, Locations, Unit},
 };
 
+/// Search algorithm used to compute the route.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum Algorithm {
+    /// Dijkstra's algorithm (unidirectional).
+    Dijkstra,
+    /// Bidirectional Dijkstra.
+    BidirDijkstra,
+    /// A* (unidirectional).
+    AStar,
+    /// Bidirectional A*.
+    #[default]
+    BidirAStar,
+}
+
+impl Algorithm {
+    pub fn run(
+        self,
+        graph: impl router_algorithm::Graph,
+        start: usize,
+        goal: usize,
+    ) -> Option<(Vec<usize>, usize)> {
+        match self {
+            Algorithm::Dijkstra => dikstra(graph, start, goal),
+            Algorithm::BidirDijkstra => bidir_dijkstra(graph, start, goal),
+            Algorithm::AStar => a_star(graph, start, goal),
+            Algorithm::BidirAStar => bidir_a_star(graph, start, goal),
+        }
+    }
+}
+
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct RouteRequest {
@@ -34,6 +69,10 @@ pub struct RouteRequest {
     /// way segment. Defaults to [`SnapMode::Edge`].
     #[cfg_attr(feature = "serde", serde(default))]
     pub snap_mode: SnapMode,
+
+    /// Search algorithm used to find the shortest path. Defaults to [`Algorithm::AStar`].
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub algorithm: Algorithm,
 
     #[cfg_attr(
         feature = "serde",
@@ -207,7 +246,8 @@ impl Service {
             };
             let (graph, start_idx, goal_idx) = VirtualGraph::new(inner, start_snap, goal_snap);
 
-            let Some((path_nodes, cost_ms)) = a_star(&graph, start_idx, goal_idx) else {
+            let Some((path_nodes, cost_ms)) = request.algorithm.run(&graph, start_idx, goal_idx)
+            else {
                 return Ok(RouteResponse {
                     id: request.id,
                     profile: profile.name.to_owned(),
