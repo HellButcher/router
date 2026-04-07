@@ -98,6 +98,62 @@ pub fn dikstra(graph: impl Graph, start: usize, goal: usize) -> Option<(Vec<usiz
     Some((path, cost))
 }
 
+/// Run Dijkstra from `start`, exploring only nodes reachable within `budget`
+/// cost units.  Returns the settled distance map for all such nodes.
+///
+/// Since the heap is a min-heap, the first settled node whose cost exceeds
+/// `budget` means all remaining entries also exceed it, so the search
+/// terminates early.  Edges whose total cost would exceed the budget are
+/// also pruned from the heap to keep it small.
+pub fn dijkstra_within_budget(
+    graph: impl Graph,
+    start: usize,
+    budget: usize,
+) -> HashMap<usize, usize> {
+    let mut dist: HashMap<usize, usize> = HashMap::new();
+    let mut heap = BinaryHeap::new();
+
+    dist.insert(start, 0);
+    heap.push(HeapState {
+        cost: 0,
+        position: start,
+    });
+
+    while let Some(HeapState { cost, position }) = heap.pop() {
+        if cost > *dist.get(&position).unwrap_or(&usize::MAX) {
+            continue; // stale entry
+        }
+        if cost > budget {
+            break; // min-heap: all remaining entries exceed budget too
+        }
+        for edge in graph.outbound(position) {
+            let next_cost = cost + edge.cost;
+            if next_cost > budget {
+                continue; // prune: settling this node would exceed budget
+            }
+            match dist.entry(edge.node) {
+                Entry::Occupied(mut e) if next_cost < *e.get() => {
+                    e.insert(next_cost);
+                    heap.push(HeapState {
+                        cost: next_cost,
+                        position: edge.node,
+                    });
+                }
+                Entry::Vacant(e) => {
+                    e.insert(next_cost);
+                    heap.push(HeapState {
+                        cost: next_cost,
+                        position: edge.node,
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    dist
+}
+
 /// Run single-source, multi-target Dijkstra from `start` on `graph`.
 ///
 /// Explores outbound edges until all `targets` are settled (or the graph is

@@ -5,6 +5,7 @@ pub mod error;
 pub mod graph;
 pub mod info;
 pub mod inspect;
+pub mod isochrone;
 pub mod locate;
 pub mod matrix;
 pub mod meta;

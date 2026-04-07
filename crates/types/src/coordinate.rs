@@ -49,8 +49,8 @@ impl LatLon {
     pub const NEG_INFINITY: Self = Self::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
 
     #[inline(always)]
-    pub const fn new(lon: f32, lat: f32) -> Self {
-        Self { lon, lat }
+    pub const fn new(lat: f32, lon: f32) -> Self {
+        Self { lat, lon }
     }
 }
 
@@ -133,26 +133,26 @@ impl fmt::Debug for LatLon {
 
 impl From<(f32, f32)> for LatLon {
     #[inline(always)]
-    fn from((lon, lat): (f32, f32)) -> Self {
-        Self { lon, lat }
+    fn from((lat, lon): (f32, f32)) -> Self {
+        Self { lat, lon }
     }
 }
 impl From<[f32; 2]> for LatLon {
     #[inline(always)]
-    fn from([lon, lat]: [f32; 2]) -> Self {
-        Self { lon, lat }
+    fn from([lat, lon]: [f32; 2]) -> Self {
+        Self { lat, lon }
     }
 }
 impl From<LatLon> for (f32, f32) {
     #[inline(always)]
     fn from(v: LatLon) -> Self {
-        (v.lon, v.lat)
+        (v.lat, v.lon)
     }
 }
 impl From<LatLon> for [f32; 2] {
     #[inline(always)]
     fn from(v: LatLon) -> Self {
-        [v.lon, v.lat]
+        [v.lat, v.lon]
     }
 }
 
@@ -160,9 +160,10 @@ impl From<LatLon> for [f32; 2] {
 impl From<geo_types::Coordinate<f32>> for LatLon {
     #[inline(always)]
     fn from(coord: geo_types::Coordinate<f32>) -> Self {
+        // geo_types uses x=lon, y=lat
         Self {
-            lat: coord.x,
-            lon: coord.y,
+            lat: coord.y,
+            lon: coord.x,
         }
     }
 }
@@ -171,9 +172,10 @@ impl From<geo_types::Coordinate<f32>> for LatLon {
 impl From<geo_types::Coordinate<f64>> for LatLon {
     #[inline(always)]
     fn from(coord: geo_types::Coordinate<f64>) -> Self {
+        // geo_types uses x=lon, y=lat
         Self {
-            lat: coord.x as f32,
-            lon: coord.y as f32,
+            lat: coord.y as f32,
+            lon: coord.x as f32,
         }
     }
 }
@@ -182,9 +184,10 @@ impl From<geo_types::Coordinate<f64>> for LatLon {
 impl Into<geo_types::Coordinate<f32>> for LatLon {
     #[inline(always)]
     fn into(self) -> geo_types::Coordinate<f32> {
+        // geo_types uses x=lon, y=lat
         geo_types::Coordinate {
-            x: self.lat,
-            y: self.lon,
+            x: self.lon,
+            y: self.lat,
         }
     }
 }
@@ -193,9 +196,10 @@ impl Into<geo_types::Coordinate<f32>> for LatLon {
 impl Into<geo_types::Coordinate<f64>> for LatLon {
     #[inline(always)]
     fn into(self) -> geo_types::Coordinate<f64> {
+        // geo_types uses x=lon, y=lat
         geo_types::Coordinate {
-            x: self.lat as f64,
-            y: self.lon as f64,
+            x: self.lon as f64,
+            y: self.lat as f64,
         }
     }
 }

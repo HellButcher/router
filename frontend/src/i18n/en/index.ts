@@ -52,6 +52,20 @@ const en = {
       noHgv: "no HGV",
     },
   },
+  isochrone: {
+    controlTitle: "Isochrone",
+    origin: "Origin",
+    noOrigin: "Activate and click the map to set the origin.",
+    unit: "Unit",
+    unitKm: "Distance (km)",
+    unitMi: "Distance (mi)",
+    unitMin: "Travel time (min)",
+    ranges: "Ranges",
+    addRange: "+ Add range",
+    removeRange: "Remove range",
+    clear: "Clear",
+    calculating: "Calculating\u2026",
+  },
 } satisfies BaseTranslation;
 
 export default en;

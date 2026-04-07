@@ -52,6 +52,21 @@ const de: Translation = {
       noHgv: "kein Lkw",
     },
   },
+  isochrone: {
+    controlTitle: "Isochronen",
+    origin: "Ursprung",
+    noOrigin:
+      "Aktivieren und auf die Karte klicken, um den Ursprung festzulegen.",
+    unit: "Einheit",
+    unitKm: "Entfernung (km)",
+    unitMi: "Entfernung (mi)",
+    unitMin: "Reisezeit (min)",
+    ranges: "Bereiche",
+    addRange: "+ Bereich hinzuf\u00fcgen",
+    removeRange: "Bereich entfernen",
+    clear: "L\u00f6schen",
+    calculating: "Wird berechnet\u2026",
+  },
 };
 
 export default de;

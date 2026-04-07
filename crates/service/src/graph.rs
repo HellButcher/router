@@ -30,11 +30,16 @@ pub trait CostModel: Send + Sync {
 
 // ── Distance cost ─────────────────────────────────────────────────────────────
 
-/// Costs edges by straight-line distance in metres (ignores speeds).
-pub struct DistanceCost;
+/// Costs edges by straight-line distance in metres, enforcing vehicle access restrictions.
+pub struct DistanceCost {
+    pub vehicle_type: VehicleType,
+}
 
 impl CostModel for DistanceCost {
-    fn edge_cost(&self, _way: &Way, from: &Node, to: &Node) -> Option<usize> {
+    fn edge_cost(&self, way: &Way, from: &Node, to: &Node) -> Option<usize> {
+        if way_is_blocked(way, self.vehicle_type) {
+            return None;
+        }
         Some(haversine_m(from.pos, to.pos) as usize)
     }
 

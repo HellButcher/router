@@ -206,6 +206,13 @@ pub async fn matrix(
     Ok(Json(service.calculate_matrix(request.0).await?))
 }
 
+pub async fn isochrone(
+    service: ServiceState,
+    request: Json<router_service::isochrone::IsochroneRequest>,
+) -> Result<Json<router_service::isochrone::IsochroneResponse>> {
+    Ok(Json(service.calculate_isochrone(request.0).await?))
+}
+
 make_router! {
     paths {
         "/info" {
@@ -278,6 +285,22 @@ make_router! {
                 response: {
                     description: "Matrix of travel summaries for each reachable (from, to) pair"
                     type: crate::Result<axum::response::Json<router_service::matrix::MatrixResponse>>
+                }
+            }
+        },
+        "/isochrone" {
+            post => isochrone {
+                sumary: "Calculate reachable areas from an origin within given distance or time thresholds"
+                parameters: [
+                    {
+                        name: request
+                        description: "The isochrone request body"
+                        type: axum::extract::Json<router_service::isochrone::IsochroneRequest>
+                    }
+                ]
+                response: {
+                    description: "Convex-hull polygons for each range threshold"
+                    type: crate::Result<axum::response::Json<router_service::isochrone::IsochroneResponse>>
                 }
             }
         }

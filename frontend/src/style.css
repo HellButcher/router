@@ -368,6 +368,108 @@ body {
     border-bottom: 1px solid var(--border);
   }
 
+  /* ── Isochrone section ── */
+  .isochrone-section {
+    display: block;
+    padding: var(--section-pad);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .isochrone-section h3 {
+    display: block;
+    font-size: 0.7em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--label-color);
+    margin-bottom: 8px;
+  }
+
+  .isochrone-origin {
+    display: block;
+    font-size: 0.8em;
+    color: #555;
+    font-variant-numeric: tabular-nums;
+    margin-bottom: 8px;
+  }
+
+  .isochrone-label {
+    display: block;
+    font-size: 0.72em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--label-color);
+    margin: 8px 0 4px;
+  }
+
+  .isochrone-unit-row {
+    display: block;
+  }
+
+  .isochrone-select {
+    display: block;
+    width: 100%;
+    padding: 5px 8px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.8);
+    font-size: 0.8em;
+    color: var(--text-color);
+    cursor: pointer;
+  }
+
+  .isochrone-ranges {
+    display: block;
+    margin-top: 2px;
+  }
+
+  .isochrone-range-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+
+  .isochrone-range-input {
+    flex: 1;
+    padding: 5px 8px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.8);
+    font-size: 0.8em;
+    color: var(--text-color);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .isochrone-range-remove {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--subtle);
+    color: #999;
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    transition:
+      background 0.15s,
+      color 0.15s;
+
+    &:hover:not(:disabled) {
+      background: rgba(239, 68, 68, 0.12);
+      color: var(--danger);
+    }
+
+    &:disabled {
+      opacity: 0.3;
+      cursor: default;
+    }
+  }
+
   /* ── Footer ── */
   footer {
     display: block;
@@ -439,6 +541,26 @@ body {
 .snap-marker--pinned {
   background-color: #e03030;
   box-shadow: 0 0 0 2px #e03030;
+}
+
+/* ── Isochrone control ──────────────────────────────────────────────────────── */
+
+.maplibregl-ctrl button.maplibregl-ctrl-isochrone .maplibregl-ctrl-icon {
+  background-image: url("icons/isochrone.svg");
+}
+
+.maplibregl-ctrl button.maplibregl-ctrl-isochrone.active {
+  background-color: rgba(0, 150, 136, 0.12);
+}
+
+/* Isochrone origin marker (on map) */
+.isochrone-origin-marker {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background-color: #009688;
+  border: 2px solid white;
+  box-shadow: 0 0 0 2px #009688;
 }
 
 /* ── Route control ──────────────────────────────────────────────────────────── */

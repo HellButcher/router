@@ -48,6 +48,12 @@ import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-csp-worker.js?url";
 
 import { Protocol } from "pmtiles";
 import {
+  ISOCHRONE_UPDATE_EVENT,
+  IsochroneControl,
+  type IsochroneUnit,
+  type IsochroneUpdate,
+} from "./controls/isochrone";
+import {
   ROUTE_UPDATE_EVENT,
   RouteControl,
   type RouteUpdate,
@@ -161,10 +167,25 @@ let routeState: RouteUpdate = {
   loading: false,
 };
 let locateInfo: LocateInfo | null = null;
+let isochroneControl: IsochroneControl | null = null;
+let isochroneState: IsochroneUpdate = {
+  active: false,
+  origin: null,
+  unit: "km",
+  ranges: [5],
+  result: null,
+  error: null,
+  loading: false,
+};
 
 document.addEventListener(LOCATE_INFO_EVENT, (e) => {
   locateInfo = (e as CustomEvent<LocateInfo | null>).detail;
   if (locateInfo) toggleSidebar(true);
+  updateSidebar();
+});
+
+document.addEventListener(ISOCHRONE_UPDATE_EVENT, (e) => {
+  isochroneState = (e as CustomEvent<IsochroneUpdate>).detail;
   updateSidebar();
 });
 
@@ -187,6 +208,13 @@ function flagList(way: NonNullable<LocateInfo["way"]>): LocalizedString[] {
     way.no_foot ? t.noFoot() : null,
     way.no_hgv ? t.noHgv() : null,
   ].filter((f): f is LocalizedString => f !== null);
+}
+
+function unitLabel(unit: IsochroneUnit): string {
+  const t = LL();
+  if (unit === "km") return t.isochrone.unitKm();
+  if (unit === "mi") return t.isochrone.unitMi();
+  return t.isochrone.unitMin();
 }
 
 function sidebarTemplate() {
@@ -274,6 +302,87 @@ function sidebarTemplate() {
         : ""
     }
 
+    <section class="isochrone-section">
+      <h3>${t.isochrone.controlTitle()}</h3>
+      ${
+        isochroneState.origin
+          ? html`<div class="isochrone-origin">
+              ${formatCoord(isochroneState.origin.lat)}, ${formatCoord(isochroneState.origin.lng)}
+            </div>`
+          : html`<p class="route-empty-hint">${t.isochrone.noOrigin()}</p>`
+      }
+
+      <div class="isochrone-unit-row">
+        <span class="isochrone-label">${t.isochrone.unit()}</span>
+        <select
+          class="isochrone-select"
+          @change=${(e: Event) =>
+            isochroneControl?.setUnit(
+              (e.target as HTMLSelectElement).value as IsochroneUnit,
+            )}
+        >
+          ${(["km", "mi", "min"] as IsochroneUnit[]).map(
+            (u) =>
+              html`<option value=${u} ?selected=${isochroneState.unit === u}>
+                ${unitLabel(u)}
+              </option>`,
+          )}
+        </select>
+      </div>
+
+      <div class="isochrone-ranges">
+        <span class="isochrone-label">${t.isochrone.ranges()}</span>
+        ${isochroneState.ranges.map(
+          (val, idx) => html`
+            <div class="isochrone-range-row">
+              <input
+                class="isochrone-range-input"
+                type="number"
+                min="0.1"
+                step="1"
+                .value=${String(val)}
+                @change=${(e: Event) => {
+                  const n = parseFloat((e.target as HTMLInputElement).value);
+                  if (n > 0) isochroneControl?.setRange(idx, n);
+                }}
+              />
+              <button
+                class="isochrone-range-remove"
+                title=${t.isochrone.removeRange()}
+                ?disabled=${isochroneState.ranges.length <= 1}
+                @click=${() => isochroneControl?.removeRange(idx)}
+              >×</button>
+            </div>
+          `,
+        )}
+        <button
+          class="route-btn"
+          style="margin-top:4px"
+          @click=${() => isochroneControl?.addRange()}
+        >${t.isochrone.addRange()}</button>
+      </div>
+
+      <div class="route-actions" style="padding:8px 0 0">
+        <button
+          class="route-btn primary"
+          @click=${() => {
+            isochroneControl?.activate();
+            toggleSidebar(false);
+          }}
+        >${isochroneState.origin ? t.isochrone.origin() : t.isochrone.noOrigin()}</button>
+        ${
+          isochroneState.origin
+            ? html`<button class="route-btn danger" @click=${() => isochroneControl?.clearAll()}>
+                ${t.isochrone.clear()}
+              </button>`
+            : ""
+        }
+      </div>
+
+      ${isochroneState.loading ? html`<div class="route-loading">${t.isochrone.calculating()}</div>` : ""}
+      ${isochroneState.error ? html`<div class="route-error">⚠ ${isochroneState.error}</div>` : ""}
+    </section>
+
     ${
       locateInfo
         ? html`
@@ -330,17 +439,33 @@ function updateSidebar() {
 function initControls() {
   const snapCtrl = new SnapControl();
   routeControl = new RouteControl();
-  snapCtrl.onActivate = () => routeControl?.deactivate();
-  routeControl.onActivate = () => snapCtrl.deactivate();
+  isochroneControl = new IsochroneControl();
+
+  snapCtrl.onActivate = () => {
+    routeControl?.deactivate();
+    isochroneControl?.deactivate();
+  };
+  routeControl.onActivate = () => {
+    snapCtrl.deactivate();
+    isochroneControl?.deactivate();
+  };
+  isochroneControl.onActivate = () => {
+    snapCtrl.deactivate();
+    routeControl?.deactivate();
+  };
 
   routeState = routeControl.currentState;
+  isochroneState = isochroneControl.currentState;
+
   document.addEventListener(ROUTE_UPDATE_EVENT, (e) => {
     routeState = (e as CustomEvent<RouteUpdate>).detail;
     updateSidebar();
   });
 
   map.addControl(new SidebarToggleControl());
-  map.addControl(new ToolGroupControl([snapCtrl, routeControl]));
+  map.addControl(
+    new ToolGroupControl([snapCtrl, routeControl, isochroneControl]),
+  );
 }
 
 initLocale().then(() => {

@@ -127,6 +127,15 @@ impl Service {
                 .flat_map(|i| (0..to_snaps.len()).map(move |j| (i, j)))
                 .collect()
         } else {
+            for &(i, j) in &request.pairs {
+                if i >= from_snaps.len() || j >= to_snaps.len() {
+                    return Err(Error::InvalidRequest(format!(
+                        "pair ({i}, {j}) out of bounds (from={}, to={})",
+                        from_snaps.len(),
+                        to_snaps.len()
+                    )));
+                }
+            }
             request.pairs
         };
 

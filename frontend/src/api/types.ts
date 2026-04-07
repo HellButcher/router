@@ -33,6 +33,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/isochrone": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Calculate reachable areas from an origin within given distance or time thresholds */
+    post: operations["isochrone"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/locate": {
     parameters: {
       query?: never;
@@ -44,6 +61,23 @@ export interface paths {
     put?: never;
     /** Find the nearest routable location for a given set of coordinates */
     post: operations["locate"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/matrix": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Calculate travel times and distances between multiple origins and destinations */
+    post: operations["matrix"];
     delete?: never;
     options?: never;
     head?: never;
@@ -108,6 +142,30 @@ export interface components {
       node?: components["schemas"]["NodeMeta"];
       way?: components["schemas"]["WayMeta"];
     };
+    IsochroneRange: {
+      /** @description Convex-hull polygon encoded as polyline, in [lat, lon] order. Closed: first point equals last. */
+      polygon: components["schemas"]["Points"];
+      /** Format: double */
+      value: number;
+    };
+    /** @description A geographic coordinate in latitude (lat) and longitude (lon) in degrees. */
+    IsochroneRequest: {
+      /** Format: float */
+      lat: number;
+      /** Format: float */
+      lon: number;
+      profile?: string | null;
+      /** @description Threshold values in the chosen unit. Need not be sorted. */
+      ranges: number[];
+      /** @default km */
+      unit?: components["schemas"]["IsochroneUnit"];
+    };
+    IsochroneResponse: {
+      profile: string;
+      ranges: components["schemas"]["IsochroneRange"][];
+      unit: components["schemas"]["IsochroneUnit"];
+    };
+    IsochroneUnit: "km" | "mi" | "min";
     /** @description A geographic coordinate in latitude (lat) and longitude (lon) in degrees. */
     LatLon: {
       /** Format: float */
@@ -129,6 +187,11 @@ export interface components {
      *     See: [`LocateResponse`], [`Service::locate`]
      */
     LocateRequest: {
+      /**
+       * @description When `true` and `snap_mode` is [`SnapMode::Edge`], ways that are inaccessible for the selected profile are skipped during snapping. Defaults to `false`.
+       * @default false
+       */
+      filter_by_profile?: boolean;
       id?: string | null;
       locations: components["schemas"]["Locations"];
       profile?: string | null;
@@ -215,6 +278,39 @@ export interface components {
           /** Format: uint8 */
           RoundaboutExit: number;
         };
+    MatrixRequest:
+      | {
+          id?: string | null;
+          pairs?: [number, number][];
+          profile?: string | null;
+          /** @default km */
+          units?: components["schemas"]["Unit"];
+        }
+      | {
+          locations: components["schemas"]["Locations"];
+        }
+      | {
+          from: components["schemas"]["Locations"];
+          to: components["schemas"]["Locations"];
+        };
+    MatrixResponse: {
+      from: components["schemas"]["Location"][];
+      id?: string | null;
+      profile: string;
+      result: components["schemas"]["MatrixResponseEntry"][];
+      to: components["schemas"]["Location"][];
+      /** @default km */
+      units?: components["schemas"]["Unit"];
+    };
+    MatrixResponseEntry: {
+      duration: components["schemas"]["Duration"];
+      /** Format: uint */
+      from: number;
+      /** Format: uint32 */
+      length: number;
+      /** Format: uint */
+      to: number;
+    };
     NodeMeta: {
       /**
        * Format: int64
@@ -359,6 +455,40 @@ export interface operations {
       };
     };
   };
+  isochrone: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description The isochrone request body */
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["IsochroneRequest"];
+      };
+    };
+    responses: {
+      /** @description Convex-hull polygons for each range threshold */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["IsochroneResponse"];
+        };
+      };
+      /** @description Error response */
+      default: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Problem"];
+        };
+      };
+    };
+  };
   locate: {
     parameters: {
       query?: never;
@@ -380,6 +510,40 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["LocateResponse"];
+        };
+      };
+      /** @description Error response */
+      default: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Problem"];
+        };
+      };
+    };
+  };
+  matrix: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description The matrix request body */
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["MatrixRequest"];
+      };
+    };
+    responses: {
+      /** @description Matrix of travel summaries for each reachable (from, to) pair */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MatrixResponse"];
         };
       };
       /** @description Error response */

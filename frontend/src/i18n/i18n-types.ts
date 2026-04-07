@@ -169,6 +169,56 @@ type RootTranslation = {
 			noHgv: string
 		}
 	}
+	isochrone: {
+		/**
+		 * I​s​o​c​h​r​o​n​e
+		 */
+		controlTitle: string
+		/**
+		 * O​r​i​g​i​n
+		 */
+		origin: string
+		/**
+		 * A​c​t​i​v​a​t​e​ ​a​n​d​ ​c​l​i​c​k​ ​t​h​e​ ​m​a​p​ ​t​o​ ​s​e​t​ ​t​h​e​ ​o​r​i​g​i​n​.
+		 */
+		noOrigin: string
+		/**
+		 * U​n​i​t
+		 */
+		unit: string
+		/**
+		 * D​i​s​t​a​n​c​e​ ​(​k​m​)
+		 */
+		unitKm: string
+		/**
+		 * D​i​s​t​a​n​c​e​ ​(​m​i​)
+		 */
+		unitMi: string
+		/**
+		 * T​r​a​v​e​l​ ​t​i​m​e​ ​(​m​i​n​)
+		 */
+		unitMin: string
+		/**
+		 * R​a​n​g​e​s
+		 */
+		ranges: string
+		/**
+		 * +​ ​A​d​d​ ​r​a​n​g​e
+		 */
+		addRange: string
+		/**
+		 * R​e​m​o​v​e​ ​r​a​n​g​e
+		 */
+		removeRange: string
+		/**
+		 * C​l​e​a​r
+		 */
+		clear: string
+		/**
+		 * C​a​l​c​u​l​a​t​i​n​g​…
+		 */
+		calculating: string
+	}
 }
 
 export type TranslationFunctions = {
@@ -325,6 +375,56 @@ export type TranslationFunctions = {
 			 */
 			noHgv: () => LocalizedString
 		}
+	}
+	isochrone: {
+		/**
+		 * Isochrone
+		 */
+		controlTitle: () => LocalizedString
+		/**
+		 * Origin
+		 */
+		origin: () => LocalizedString
+		/**
+		 * Activate and click the map to set the origin.
+		 */
+		noOrigin: () => LocalizedString
+		/**
+		 * Unit
+		 */
+		unit: () => LocalizedString
+		/**
+		 * Distance (km)
+		 */
+		unitKm: () => LocalizedString
+		/**
+		 * Distance (mi)
+		 */
+		unitMi: () => LocalizedString
+		/**
+		 * Travel time (min)
+		 */
+		unitMin: () => LocalizedString
+		/**
+		 * Ranges
+		 */
+		ranges: () => LocalizedString
+		/**
+		 * + Add range
+		 */
+		addRange: () => LocalizedString
+		/**
+		 * Remove range
+		 */
+		removeRange: () => LocalizedString
+		/**
+		 * Clear
+		 */
+		clear: () => LocalizedString
+		/**
+		 * Calculating…
+		 */
+		calculating: () => LocalizedString
 	}
 }
 

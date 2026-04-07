@@ -1,6 +1,7 @@
 pub mod a_star;
 pub mod bidir_a_star;
 pub mod bidir_dijkstra;
+pub mod convex_hull;
 pub mod dikstra;
 
 #[derive(Copy, Clone)]
