@@ -10,7 +10,8 @@
     "fmt": "biome format --write",
     "check": "biome check",
     "fix": "biome check --write",
-    "generate-api": "tsx scripts/generate-api.ts"
+    "generate-api": "tsx scripts/generate-api.ts",
+    "generate-i18n": "typesafe-i18n --no-watch"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",
@@ -27,6 +28,7 @@
     "lit-html": "^3.3.2",
     "maplibre-gl": "^5.21.1",
     "openapi-fetch": "^0.17.0",
-    "pmtiles": "^4.4.0"
+    "pmtiles": "^4.4.0",
+    "typesafe-i18n": "^5.27.1"
   }
 }

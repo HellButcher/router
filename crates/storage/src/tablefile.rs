@@ -265,6 +265,23 @@ impl<D: TableData> TableFile<D> {
         self.len() == 0
     }
 
+    /// Binary-search for an item by its key.
+    ///
+    /// Returns `Some((table_index, item))` when found, or `None` when not present.
+    /// Requires the table to be sorted by key, which is guaranteed after import.
+    pub fn find(&self, key: &D::Key) -> Result<Option<(usize, Ref<'_, D>)>>
+    where
+        D: crate::pod::Item,
+    {
+        let all = self.get_all()?;
+        let result = all.binary_search_by(|d| d.key().cmp(key));
+        drop(all);
+        match result {
+            Ok(idx) => Ok(Some((idx, self.get(idx)?))),
+            Err(_) => Ok(None),
+        }
+    }
+
     #[inline]
     pub fn get(&self, index: usize) -> Result<Ref<'_, D>> {
         let Ref(mmap, slice) = self.get_slice(index, 1)?;

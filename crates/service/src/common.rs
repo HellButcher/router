@@ -6,6 +6,8 @@ use router_types::coordinate::LatLon;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+use crate::meta::{NodeMeta, WayMeta};
+
 /// Units for distances
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -61,6 +63,18 @@ pub struct Location {
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub id: Option<String>,
+
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub node_meta: Option<NodeMeta>,
+
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub way_meta: Option<WayMeta>,
 
     #[cfg(feature = "serde")]
     #[serde(flatten)]

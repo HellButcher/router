@@ -8,6 +8,7 @@ import {
 } from "maplibre-gl";
 import { client } from "../api/client.js";
 import { decodePolyline } from "../api/polyline.js";
+import { LL } from "../i18n/index.js";
 
 // ── Public event / state types ─────────────────────────────────────────────
 
@@ -93,8 +94,8 @@ export class RouteControl implements IControl {
     const button = document.createElement("button");
     button.className = "maplibregl-ctrl-route";
     button.type = "button";
-    button.title = "Calculate route";
-    button.ariaLabel = "Calculate route";
+    button.title = LL().route.controlTitle();
+    button.ariaLabel = LL().route.controlTitle();
     const icon = document.createElement("span");
     icon.className = "maplibregl-ctrl-icon";
     icon.ariaHidden = "true";
@@ -148,9 +149,17 @@ export class RouteControl implements IControl {
 
   // ── Public API (called from sidebar) ─────────────────────────────────────
 
+  /** Called by external code when another tool activates. */
+  onActivate?: () => void;
+
   /** Activate route-adding mode (next map click will append a waypoint). */
   activate(): void {
     if (!this._active) this._toggleActive();
+  }
+
+  /** Deactivate route-adding mode without clearing waypoints. */
+  deactivate(): void {
+    if (this._active) this._toggleActive();
   }
 
   /** Remove a waypoint by id and re-calculate. */
@@ -192,6 +201,7 @@ export class RouteControl implements IControl {
   private _toggleActive(): void {
     this._active = !this._active;
     this._button?.classList.toggle("active", this._active);
+    if (this._active) this.onActivate?.();
     if (this._active && this._map) {
       this._map.getCanvas().style.cursor = "crosshair";
     } else if (this._map) {

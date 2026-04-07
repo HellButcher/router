@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!!**/dist"]
+    "includes": ["**", "!src/i18n/i18n-*.ts", "!!**/dist"]
   },
   "formatter": {
     "enabled": true,

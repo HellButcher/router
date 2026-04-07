@@ -16,6 +16,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/inspect": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Look up meta information for a node or way by its OSM ID */
+    post: operations["inspect"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/locate": {
     parameters: {
       query?: never;
@@ -54,6 +71,8 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    /** @description Search algorithm used to compute the route. */
+    Algorithm: "dijkstra" | "bidir_dijkstra" | "a_star" | "bidir_a_star";
     BoundingBox: {
       max: components["schemas"]["LatLon"];
       min: components["schemas"]["LatLon"];
@@ -73,6 +92,21 @@ export interface components {
       profiles: string[];
       status: components["schemas"]["ServiceStatus"];
       version: string;
+    };
+    /**
+     * @description Look up meta information for a node or way by its OSM ID.
+     *
+     *     Exactly one of `node_id` or `way_id` must be set.
+     */
+    InspectRequest: {
+      /** Format: int64 */
+      node_id?: number | null;
+      /** Format: int64 */
+      way_id?: number | null;
+    };
+    InspectResponse: {
+      node?: components["schemas"]["NodeMeta"];
+      way?: components["schemas"]["WayMeta"];
     };
     /** @description A geographic coordinate in latitude (lat) and longitude (lon) in degrees. */
     LatLon: {
@@ -105,6 +139,11 @@ export interface components {
       snap_mode?: components["schemas"]["SnapMode"];
       /** @default km */
       units?: components["schemas"]["Unit"];
+      /**
+       * @description When `true`, the response locations include [`NodeMeta`] / [`WayMeta`]. Defaults to `false` to keep responses small.
+       * @default false
+       */
+      with_meta?: boolean;
     };
     /**
      * @description A response for a [`LocateRequest`], containing the snapped locations.
@@ -135,10 +174,12 @@ export interface components {
       lat: number;
       /** Format: float */
       lon: number;
+      node_meta?: components["schemas"]["NodeMeta"];
       /** Format: uint32 */
       radius?: number | null;
       /** Format: uint64 */
       way_id?: number | null;
+      way_meta?: components["schemas"]["WayMeta"];
     } & {
       [key: string]: unknown;
     };
@@ -174,6 +215,17 @@ export interface components {
           /** Format: uint8 */
           RoundaboutExit: number;
         };
+    NodeMeta: {
+      /**
+       * Format: int64
+       * @description OSM node ID.
+       */
+      id: number;
+      /** Format: float */
+      lat: number;
+      /** Format: float */
+      lon: number;
+    };
     /** @description A list of Points */
     Points: number[][] | string;
     Problem: {
@@ -183,6 +235,11 @@ export interface components {
       title: string;
     };
     RouteRequest: {
+      /**
+       * @description Search algorithm used to find the shortest path. Defaults to [`Algorithm::AStar`].
+       * @default bidir_a_star
+       */
+      algorithm?: components["schemas"]["Algorithm"];
       id?: string | null;
       locations: components["schemas"]["Locations"];
       /** @default null */
@@ -218,6 +275,27 @@ export interface components {
      * @enum {string}
      */
     Unit: "km" | "mi";
+    WayMeta: {
+      from_node: components["schemas"]["NodeMeta"];
+      /** @description Highway classification (e.g. `"Residential"`, `"Primary"`). */
+      highway: string;
+      /**
+       * Format: int64
+       * @description OSM way ID.
+       */
+      id: number;
+      /**
+       * Format: uint8
+       * @description Explicit max speed in km/h; 0 means use highway-class default.
+       */
+      max_speed: number;
+      no_bicycle: boolean;
+      no_foot: boolean;
+      no_hgv: boolean;
+      no_motor: boolean;
+      oneway: boolean;
+      to_node: components["schemas"]["NodeMeta"];
+    };
   };
   responses: never;
   parameters: never;
@@ -243,6 +321,40 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["InfoResponse"];
+        };
+      };
+    };
+  };
+  inspect: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description The inspect request body */
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["InspectRequest"];
+      };
+    };
+    responses: {
+      /** @description Node or way meta information */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["InspectResponse"];
+        };
+      };
+      /** @description Error response */
+      default: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Problem"];
         };
       };
     };

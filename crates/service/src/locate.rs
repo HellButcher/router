@@ -4,6 +4,7 @@ use std::num::NonZeroU64;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
+use crate::meta::{NodeMeta, WayMeta};
 use crate::snap::EdgeSnapper;
 
 pub use super::common::Points;
@@ -42,6 +43,10 @@ pub struct LocateRequest {
     /// segment. Defaults to [`SnapMode::Node`].
     #[cfg_attr(feature = "serde", serde(default))]
     pub snap_mode: SnapMode,
+    /// When `true`, the response locations include [`NodeMeta`] / [`WayMeta`].
+    /// Defaults to `false` to keep responses small.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub with_meta: bool,
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -96,11 +101,16 @@ impl Service {
             let _span = tracing::trace_span!("locate").entered();
             match request.snap_mode {
                 SnapMode::Node => {
-                    if let Some((_node_idx, snapped_lat, snapped_lon, _dist)) =
+                    if let Some((node_idx, snapped_lat, snapped_lon, _dist)) =
                         self.spatial.nearest(loc.lat, loc.lon, max_radius_m)
                     {
                         loc.coordinate.lat = snapped_lat;
                         loc.coordinate.lon = snapped_lon;
+                        if request.with_meta {
+                            if let Ok(node) = self.nodes.get(node_idx as usize) {
+                                loc.node_meta = Some(NodeMeta::from(&node));
+                            }
+                        }
                     }
                 }
                 SnapMode::Edge => {
@@ -108,6 +118,11 @@ impl Service {
                         loc.coordinate = snap.pos;
                         loc.way_id = NonZeroU64::new(snap.way_id);
                         loc.fraction = Some(snap.fraction);
+                        if request.with_meta {
+                            if let Ok(way) = self.ways.get(snap.way_idx) {
+                                loc.way_meta = WayMeta::from(&way, &self.nodes).ok();
+                            }
+                        }
                     }
                 }
             }

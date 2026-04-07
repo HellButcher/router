@@ -192,6 +192,13 @@ pub async fn route(
     Ok(Json(service.calculate_route(request.0).await?))
 }
 
+pub async fn inspect(
+    service: ServiceState,
+    request: Json<router_service::inspect::InspectRequest>,
+) -> Result<Json<router_service::inspect::InspectResponse>> {
+    Ok(Json(service.inspect(request.0).await?))
+}
+
 make_router! {
     paths {
         "/info" {
@@ -232,6 +239,22 @@ make_router! {
                 response: {
                     description: "The route response: path geometry and travel summary"
                     type: crate::Result<axum::response::Json<router_service::route::RouteResponse>>
+                }
+            }
+        },
+        "/inspect" {
+            post => inspect {
+                sumary: "Look up meta information for a node or way by its OSM ID"
+                parameters: [
+                    {
+                        name: request
+                        description: "The inspect request body"
+                        type: axum::extract::Json<router_service::inspect::InspectRequest>
+                    }
+                ]
+                response: {
+                    description: "Node or way meta information"
+                    type: crate::Result<axum::response::Json<router_service::inspect::InspectResponse>>
                 }
             }
         }

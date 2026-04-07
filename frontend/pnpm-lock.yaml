@@ -23,6 +23,9 @@ importers:
       pmtiles:
         specifier: ^4.4.0
         version: 4.4.0
+      typesafe-i18n:
+        specifier: ^5.27.1
+        version: 5.27.1(typescript@5.9.3)
     devDependencies:
       '@biomejs/biome':
         specifier: ^2.4.10
@@ -746,6 +749,12 @@ packages:
     resolution: {integrity: sha512-TeTSQ6H5YHvpqVwBRcnLDCBnDOHWYu7IvGbHT6N8AOymcr9PJGjc1GTtiWZTYg0NCgYwvnYWEkVChQAr9bjfwA==}
     engines: {node: '>=16'}
 
+  typesafe-i18n@5.27.1:
+    resolution: {integrity: sha512-749uWo2ZXETT//kWjVYPm8QPYR8xLh8G0wLfoAyCAtAmysX67uCaAyLjAjAWojL6fuJpE5B6yIjwvO9orXzUPg==}
+    hasBin: true
+    peerDependencies:
+      typescript: '>=3.5.1'
+
   typescript@5.9.3:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
     engines: {node: '>=14.17'}
@@ -1387,6 +1396,10 @@ snapshots:
       fsevents: 2.3.3
 
   type-fest@4.41.0: {}
+
+  typesafe-i18n@5.27.1(typescript@5.9.3):
+    dependencies:
+      typescript: 5.9.3
 
   typescript@5.9.3: {}
 
