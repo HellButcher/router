@@ -3,6 +3,7 @@ pub mod bidir_a_star;
 pub mod bidir_dijkstra;
 pub mod dikstra;
 
+#[derive(Copy, Clone)]
 pub struct Edge {
     pub node: usize,
     pub cost: usize,

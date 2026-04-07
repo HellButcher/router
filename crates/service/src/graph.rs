@@ -124,13 +124,18 @@ impl<C: CostModel> Graph for RoadGraph<'_, C> {
         }
     }
 
-    fn heuristic(&self, from_idx: usize, _to_idx: usize) -> usize {
+    fn heuristic(&self, from_idx: usize, to_idx: usize) -> usize {
         let from_pos = self
             .nodes
             .get(from_idx)
             .map(|n| n.pos)
             .unwrap_or(self.goal_pos);
-        self.cost_model.heuristic(from_pos, self.goal_pos)
+        let to_pos = self
+            .nodes
+            .get(to_idx)
+            .map(|n| n.pos)
+            .unwrap_or(self.goal_pos);
+        self.cost_model.heuristic(from_pos, to_pos)
     }
 }
 
@@ -172,28 +177,34 @@ impl<C: CostModel> Iterator for WayIter<'_, C> {
 
             // After node-index resolution from_node_idx / to_node_idx are direct
             // table indices — no binary search needed.
-            let (from_idx, neighbour_idx) = if self.reverse {
-                (way.to_node_idx as usize, way.from_node_idx as usize)
+            let way_from_idx = way.from_node_idx as usize;
+            let way_to_idx = way.to_node_idx as usize;
+            // The neighbour we are travelling toward.
+            let neighbour_idx = if self.reverse {
+                way_from_idx
             } else {
-                (way.from_node_idx as usize, way.to_node_idx as usize)
+                way_to_idx
             };
 
-            let from = match self.graph.nodes.get(from_idx) {
+            // Always pass nodes in the way's stored direction to edge_cost so
+            // that asymmetric cost models (e.g. directional speed limits) see
+            // (from_node, to_node) consistently, regardless of traversal direction.
+            let way_from = match self.graph.nodes.get(way_from_idx) {
                 Ok(n) => n,
                 Err(e) => {
-                    tracing::warn!(from_idx, error = %e, "nodes.get failed");
+                    tracing::warn!(way_from_idx, error = %e, "nodes.get failed");
                     continue;
                 }
             };
-            let to = match self.graph.nodes.get(neighbour_idx) {
+            let way_to = match self.graph.nodes.get(way_to_idx) {
                 Ok(n) => n,
                 Err(e) => {
-                    tracing::warn!(neighbour_idx, error = %e, "nodes.get failed");
+                    tracing::warn!(way_to_idx, error = %e, "nodes.get failed");
                     continue;
                 }
             };
 
-            if let Some(cost) = self.graph.cost_model.edge_cost(&way, &from, &to) {
+            if let Some(cost) = self.graph.cost_model.edge_cost(&way, &way_from, &way_to) {
                 return Some(Edge {
                     node: neighbour_idx,
                     cost,
@@ -223,5 +234,7 @@ pub fn haversine_m(a: LatLon, b: LatLon) -> f32 {
     let dlat = (b.lat - a.lat).to_radians();
     let dlon = (b.lon - a.lon).to_radians();
     let s = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
-    2.0 * R * s.sqrt().asin()
+    // Clamp to [0, 1] to guard against f32 rounding producing values slightly
+    // outside that range, which would make sqrt().asin() return NaN.
+    2.0 * R * s.clamp(0.0, 1.0).sqrt().asin()
 }

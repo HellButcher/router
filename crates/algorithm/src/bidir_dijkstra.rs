@@ -68,34 +68,18 @@ pub fn bidir_dijkstra(graph: impl Graph, start: usize, goal: usize) -> Option<(V
     // Node through which the best path passes.
     let mut meeting = None;
 
-    let relax = |heap: &mut BinaryHeap<HeapState>,
-                 dist: &mut HashMap<usize, usize>,
-                 pred: &mut HashMap<usize, usize>,
-                 from: usize,
-                 to: usize,
-                 cost: usize| {
-        match dist.entry(to) {
-            Entry::Occupied(mut e) if cost < *e.get() => {
-                e.insert(cost);
-                pred.insert(to, from);
-                heap.push(HeapState { cost, position: to });
-            }
-            Entry::Vacant(e) => {
-                e.insert(cost);
-                pred.insert(to, from);
-                heap.push(HeapState { cost, position: to });
-            }
-            _ => {}
-        }
-    };
-
     loop {
-        let top_f = heap_f.peek().map(|s| s.cost).unwrap_or(usize::MAX);
-        let top_b = heap_b.peek().map(|s| s.cost).unwrap_or(usize::MAX);
+        // Use Option so we can distinguish "empty heap" from "cost 0".
+        let top_f = heap_f.peek().map(|s| s.cost);
+        let top_b = heap_b.peek().map(|s| s.cost);
 
-        // Termination: both frontiers' minimum costs exceed best found path.
-        if top_f.saturating_add(top_b) >= best {
-            break;
+        // Termination: once both frontier minima sum to ≥ best no shorter path
+        // can be found. If either heap is empty the search on that side is
+        // exhausted; there is nothing left to explore.
+        match (top_f, top_b) {
+            (None, _) | (_, None) => break,
+            (Some(f), Some(b)) if f.saturating_add(b) >= best => break,
+            _ => {}
         }
 
         if top_f <= top_b {
@@ -108,20 +92,30 @@ pub fn bidir_dijkstra(graph: impl Graph, start: usize, goal: usize) -> Option<(V
             }
             for edge in graph.outbound(position) {
                 let next_cost = cost + edge.cost;
-                relax(
-                    &mut heap_f,
-                    &mut dist_f,
-                    &mut pred_f,
-                    position,
-                    edge.node,
-                    next_cost,
-                );
-                // Check if this node has been reached by the backward search.
-                if let Some(&back_cost) = dist_b.get(&edge.node) {
-                    let total = next_cost.saturating_add(back_cost);
-                    if total < best {
-                        best = total;
-                        meeting = Some(edge.node);
+                let improved = match dist_f.entry(edge.node) {
+                    Entry::Occupied(mut e) if next_cost < *e.get() => {
+                        e.insert(next_cost);
+                        true
+                    }
+                    Entry::Vacant(e) => {
+                        e.insert(next_cost);
+                        true
+                    }
+                    _ => false,
+                };
+                if improved {
+                    pred_f.insert(edge.node, position);
+                    heap_f.push(HeapState {
+                        cost: next_cost,
+                        position: edge.node,
+                    });
+                    // next_cost == dist_f[edge.node] here (just committed).
+                    if let Some(&back_cost) = dist_b.get(&edge.node) {
+                        let total = next_cost.saturating_add(back_cost);
+                        if total < best {
+                            best = total;
+                            meeting = Some(edge.node);
+                        }
                     }
                 }
             }
@@ -135,20 +129,30 @@ pub fn bidir_dijkstra(graph: impl Graph, start: usize, goal: usize) -> Option<(V
             }
             for edge in graph.inbound(position) {
                 let next_cost = cost + edge.cost;
-                relax(
-                    &mut heap_b,
-                    &mut dist_b,
-                    &mut pred_b,
-                    position,
-                    edge.node,
-                    next_cost,
-                );
-                // Check if this node has been reached by the forward search.
-                if let Some(&fwd_cost) = dist_f.get(&edge.node) {
-                    let total = fwd_cost.saturating_add(next_cost);
-                    if total < best {
-                        best = total;
-                        meeting = Some(edge.node);
+                let improved = match dist_b.entry(edge.node) {
+                    Entry::Occupied(mut e) if next_cost < *e.get() => {
+                        e.insert(next_cost);
+                        true
+                    }
+                    Entry::Vacant(e) => {
+                        e.insert(next_cost);
+                        true
+                    }
+                    _ => false,
+                };
+                if improved {
+                    pred_b.insert(edge.node, position);
+                    heap_b.push(HeapState {
+                        cost: next_cost,
+                        position: edge.node,
+                    });
+                    // next_cost == dist_b[edge.node] here (just committed).
+                    if let Some(&fwd_cost) = dist_f.get(&edge.node) {
+                        let total = fwd_cost.saturating_add(next_cost);
+                        if total < best {
+                            best = total;
+                            meeting = Some(edge.node);
+                        }
                     }
                 }
             }
