@@ -1,3 +1,4 @@
+use std::num::NonZeroU64;
 use std::time::Duration;
 
 use router_algorithm::a_star::a_star;
@@ -8,6 +9,9 @@ use serde::{Deserialize, Serialize};
 use crate::{
     error::{Error, Result},
     graph::{RoadGraph, TravelTimeCost, haversine_m},
+    locate::SnapMode,
+    snap::{EdgeSnapper, Snap},
+    virtual_graph::{VIRTUAL_GOAL, VIRTUAL_START, VirtualGraph},
 };
 
 pub use super::common::Points;
@@ -25,6 +29,11 @@ pub struct RouteRequest {
     pub units: Unit,
 
     pub locations: Locations,
+
+    /// Whether to snap waypoints to the nearest node or the nearest point on a
+    /// way segment. Defaults to [`SnapMode::Edge`].
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub snap_mode: SnapMode,
 
     #[cfg_attr(
         feature = "serde",
@@ -125,6 +134,7 @@ impl Service {
     pub async fn calculate_route(&self, request: RouteRequest) -> Result<RouteResponse> {
         let profile = self.get_opt_profile(request.profile.as_deref())?;
         let units = request.units;
+        let snap_mode = request.snap_mode;
         let locations: Vec<Location> = request.locations.try_into()?;
 
         if locations.len() < 2 {
@@ -133,49 +143,71 @@ impl Service {
             ));
         }
 
-        // Snap each location to the nearest node.
-        let all_nodes = self.nodes.get_all().map_err(Error::StorageError)?;
-        tracing::debug!(total_nodes = all_nodes.len(), "snapping locations");
-        let mut snapped: Vec<usize> = Vec::with_capacity(locations.len());
+        let snapper = EdgeSnapper {
+            nodes: &self.nodes,
+            ways: &self.ways,
+            edge_spatial: &self.edge_spatial,
+        };
+
+        // Snap each location.
+        let mut snaps: Vec<Snap> = Vec::with_capacity(locations.len());
         for loc in &locations {
-            let (node_idx, _lat, _lon, _dist) = self
-                .spatial
-                .nearest(loc.lat, loc.lon, self.max_radius_m)
-                .ok_or_else(|| {
-                    Error::InvalidRequest(format!(
-                        "no routable node found near ({}, {})",
-                        loc.lat, loc.lon
-                    ))
-                })?;
-            snapped.push(node_idx as usize);
+            let snap = match snap_mode {
+                SnapMode::Node => self
+                    .spatial
+                    .nearest(loc.lat, loc.lon, self.max_radius_m)
+                    .map(|(idx, lat, lon, _)| Snap::Node {
+                        node_idx: idx as usize,
+                        pos: router_types::coordinate::LatLon(lat, lon),
+                    }),
+                SnapMode::Edge => snapper
+                    .snap_to_edge(loc.lat, loc.lon, self.max_radius_m)
+                    .map(Snap::Edge),
+            };
+            snaps.push(snap.ok_or_else(|| {
+                Error::InvalidRequest(format!(
+                    "no routable position found near ({}, {})",
+                    loc.lat, loc.lon
+                ))
+            })?);
         }
 
-        // Use snapped node positions as the canonical waypoint locations.
-        let snapped_locations: Vec<Location> = snapped
+        // Build canonical waypoint locations from snaps.
+        let snapped_locations: Vec<Location> = snaps
             .iter()
-            .map(|&idx| Location {
-                id: Some(all_nodes[idx].id.0.to_string()),
-                coordinate: all_nodes[idx].pos,
-                ..Default::default()
+            .map(|snap| match snap {
+                Snap::Node { node_idx, pos } => Location {
+                    id: self.nodes.get(*node_idx).ok().map(|n| n.id.0.to_string()),
+                    coordinate: *pos,
+                    ..Default::default()
+                },
+                Snap::Edge(e) => Location {
+                    coordinate: e.pos,
+                    way_id: NonZeroU64::new(e.way_id),
+                    fraction: Some(e.fraction),
+                    ..Default::default()
+                },
             })
             .collect();
 
         // Route leg by leg (one leg per consecutive location pair).
-        let mut legs: Vec<Leg> = Vec::with_capacity(snapped.len() - 1);
+        let mut legs: Vec<Leg> = Vec::with_capacity(snaps.len() - 1);
         let mut trip_bounds = BoundingBox::VOID;
         let mut trip_duration_ms: u64 = 0;
         let mut trip_length_m: u32 = 0;
 
-        for window in snapped.windows(2) {
-            let (start, goal) = (window[0], window[1]);
-            let graph = RoadGraph {
+        for window in snaps.windows(2) {
+            let (start_snap, goal_snap) = (&window[0], &window[1]);
+
+            let inner = RoadGraph {
                 nodes: &self.nodes,
                 ways: &self.ways,
                 cost_model: TravelTimeCost { profile },
-                goal_pos: all_nodes[goal].pos,
+                goal_pos: goal_snap.pos(),
             };
+            let (graph, start_idx, goal_idx) = VirtualGraph::new(inner, start_snap, goal_snap);
 
-            let Some((path_nodes, cost_ms)) = a_star(&graph, start, goal) else {
+            let Some((path_nodes, cost_ms)) = a_star(&graph, start_idx, goal_idx) else {
                 return Ok(RouteResponse {
                     id: request.id,
                     profile: profile.name.to_owned(),
@@ -190,17 +222,24 @@ impl Service {
                 });
             };
 
+            // Resolve a path node index to a position, handling virtual sentinels.
+            let resolve_pos = |idx: usize| match idx {
+                VIRTUAL_START => start_snap.pos(),
+                VIRTUAL_GOAL => goal_snap.pos(),
+                i => self.nodes.get(i).map(|n| n.pos).unwrap_or(start_snap.pos()),
+            };
+
             // Build geometry and compute leg metrics.
             let mut leg_bounds = BoundingBox::VOID;
             let mut leg_length_m: u32 = 0;
             let mut coords: Vec<[f32; 2]> = Vec::with_capacity(path_nodes.len());
 
             for i in 0..path_nodes.len() {
-                let pos = all_nodes[path_nodes[i]].pos;
+                let pos = resolve_pos(path_nodes[i]);
                 leg_bounds.add(pos);
                 coords.push([pos.lat, pos.lon]);
                 if i > 0 {
-                    let prev = all_nodes[path_nodes[i - 1]].pos;
+                    let prev = resolve_pos(path_nodes[i - 1]);
                     leg_length_m = leg_length_m.saturating_add(haversine_m(prev, pos) as u32);
                 }
             }

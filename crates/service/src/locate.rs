@@ -18,11 +18,11 @@ use super::{
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub enum SnapMode {
-    /// Snap to the nearest graph node (default).
-    #[default]
+    /// Snap to the nearest graph node.
     Node,
     /// Snap to the nearest point on the nearest way segment.
     /// The response location will include `way_id` and `fraction`.
+    #[default]
     Edge,
 }
 

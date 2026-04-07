@@ -9,6 +9,7 @@ pub mod matrix;
 pub mod profile;
 pub mod route;
 pub mod snap;
+pub mod virtual_graph;
 
 use crate::error::{Error, Result};
 use profile::{PROFILES, Profile};

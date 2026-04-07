@@ -90,7 +90,7 @@ export class SnapControl implements IControl {
 
     try {
       const { data } = await client.POST("/api/v1/locate", {
-        body: { locations: [{ lat, lon: lng }], snap_mode: "Edge" },
+        body: { locations: [{ lat, lon: lng }] },
         signal: ac.signal,
       });
       const loc = data?.locations?.[0];

@@ -7,6 +7,24 @@ use router_types::coordinate::LatLon;
 
 use crate::graph::haversine_m;
 
+// ── Snap ──────────────────────────────────────────────────────────────────────
+
+/// Result of snapping a waypoint coordinate — either to a node or to a point
+/// on a way segment.
+pub enum Snap {
+    Node { node_idx: usize, pos: LatLon },
+    Edge(EdgeSnap),
+}
+
+impl Snap {
+    pub fn pos(&self) -> LatLon {
+        match self {
+            Self::Node { pos, .. } => *pos,
+            Self::Edge(e) => e.pos,
+        }
+    }
+}
+
 // ── EdgeSnap ──────────────────────────────────────────────────────────────────
 
 /// Result of snapping a point to the nearest way segment.
