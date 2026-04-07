@@ -3,6 +3,7 @@ use std::sync::atomic::AtomicU64;
 use router_types::coordinate::LatLon;
 
 use crate::{
+    data::Versioned,
     pod::{Item, TablePod},
     tablefile::TableData,
 };
@@ -76,4 +77,9 @@ impl Item for Node {
 
 impl TableData for Node {
     type Header = SimpleHeader<Node>;
+}
+
+impl Versioned for Node {
+    // The version number should be incremented whenever the in-memory representation of `Way` changes in a non-compatible way, such that old data files can no longer be read correctly.
+    const VERSION: u32 = 1;
 }

@@ -1,6 +1,7 @@
 use std::sync::atomic::AtomicU64;
 
 use crate::{
+    data::Versioned,
     pod::{Item, TablePod},
     tablefile::TableData,
 };
@@ -104,4 +105,9 @@ impl Item for Way {
 
 impl TableData for Way {
     type Header = SimpleHeader<Way>;
+}
+
+impl Versioned for Way {
+    // The version number should be incremented whenever the in-memory representation of `Way` changes in a non-compatible way, such that old data files can no longer be read correctly.
+    const VERSION: u32 = 1;
 }

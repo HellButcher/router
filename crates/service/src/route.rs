@@ -193,7 +193,7 @@ impl Service {
         for loc in &locations {
             let snap = match snap_mode {
                 SnapMode::Node => self
-                    .spatial
+                    .node_spatial
                     .nearest(loc.lat, loc.lon, self.max_radius_m)
                     .map(|(idx, lat, lon, _)| Snap::Node {
                         node_idx: idx as usize,

@@ -38,6 +38,7 @@ use crate::{extsort, pod::TablePod};
 // ── constants ─────────────────────────────────────────────────────────────────
 
 const MAGIC: u64 = 0x5350_4154_5f49_4458; // b"SPAT_IDX"
+// Data format version. Increment on any non-compatible change (eg: adding fields).
 const VERSION: u32 = 1;
 const MAX_LEVELS: usize = 16;
 /// Default branching factor.

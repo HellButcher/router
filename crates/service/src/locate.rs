@@ -111,7 +111,7 @@ impl Service {
             match request.snap_mode {
                 SnapMode::Node => {
                     if let Some((node_idx, snapped_lat, snapped_lon, _dist)) =
-                        self.spatial.nearest(loc.lat, loc.lon, max_radius_m)
+                        self.node_spatial.nearest(loc.lat, loc.lon, max_radius_m)
                     {
                         loc.coordinate.lat = snapped_lat;
                         loc.coordinate.lon = snapped_lon;

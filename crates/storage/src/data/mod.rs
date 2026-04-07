@@ -1,6 +1,6 @@
 use std::{hash::Hasher, marker::PhantomData, mem::size_of};
 
-use crate::pod::TablePod;
+use crate::{pod::TablePod, tablefile::TableData};
 
 use self::{
     node::{NO_WAY, Node, NodeId},
@@ -14,6 +14,7 @@ pub mod way;
 #[repr(C)]
 pub struct SimpleHeader<I> {
     hash: u64,
+    version: u64,
     header_size: u64,
     data_size: u64,
     name: [u8; 128],
@@ -22,24 +23,63 @@ pub struct SimpleHeader<I> {
 
 unsafe impl<I> TablePod for SimpleHeader<I> {}
 
-impl<I: 'static> SimpleHeader<I> {
+pub trait Versioned {
+    /// Version number for the data format. Must be incremented when the data format changes in a non-compatible way (eg: adding fields, changing field types, etc).
+    const VERSION: u32;
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum VerifiicationError {
+    HashMismatch,
+    VersionMismatch,
+    HeaderSizeMismatch,
+    DataSizeMismatch,
+}
+
+impl VerifiicationError {
+    pub fn description(&self) -> &'static str {
+        match self {
+            VerifiicationError::HashMismatch => "Header hash does not match expected value",
+            VerifiicationError::VersionMismatch => "Header version does not match expected value",
+            VerifiicationError::HeaderSizeMismatch => "Header size does not match expected value",
+            VerifiicationError::DataSizeMismatch => "Data size does not match expected value",
+        }
+    }
+}
+
+impl From<VerifiicationError> for std::io::Error {
+    fn from(e: VerifiicationError) -> std::io::Error {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, e.description())
+    }
+}
+
+impl<I: 'static + Versioned> SimpleHeader<I> {
     fn name_hash() -> u64 {
         let mut hash = std::hash::DefaultHasher::new();
         hash.write(std::any::type_name::<I>().as_bytes());
         hash.finish()
     }
 
-    pub fn verify(&self) -> bool {
-        self.hash == Self::name_hash()
-            && self.header_size == size_of::<Self>() as u64
-            && self.data_size == size_of::<I>() as u64
+    pub fn verify(&self) -> Result<(), VerifiicationError> {
+        if self.hash != Self::name_hash() {
+            Err(VerifiicationError::HashMismatch)
+        } else if self.version != I::VERSION as u64 {
+            Err(VerifiicationError::VersionMismatch)
+        } else if self.header_size != size_of::<Self>() as u64 {
+            Err(VerifiicationError::HeaderSizeMismatch)
+        } else if self.data_size != size_of::<I>() as u64 {
+            Err(VerifiicationError::DataSizeMismatch)
+        } else {
+            Ok(())
+        }
     }
 }
 
-impl<I: 'static> Default for SimpleHeader<I> {
+impl<I: 'static + Versioned> Default for SimpleHeader<I> {
     fn default() -> Self {
         let mut r = Self {
             hash: Self::name_hash(),
+            version: I::VERSION as u64,
             header_size: size_of::<Self>() as u64,
             data_size: size_of::<I>() as u64,
             name: [0; 128],

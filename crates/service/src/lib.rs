@@ -40,7 +40,7 @@ impl Default for ServiceOptions {
 
 pub struct Service {
     profiles: Vec<&'static Profile>,
-    pub(crate) spatial: SpatialIndex,
+    pub(crate) node_spatial: SpatialIndex,
     pub(crate) edge_spatial: SpatialIndex,
     pub(crate) nodes: TableFile<Node>,
     pub(crate) ways: TableFile<Way>,
@@ -49,13 +49,15 @@ pub struct Service {
 
 impl Service {
     pub fn open(options: ServiceOptions) -> io::Result<Self> {
-        let spatial = SpatialIndex::open(options.storage_dir.join("node_spatial.bin"))?;
+        let node_spatial = SpatialIndex::open(options.storage_dir.join("node_spatial.bin"))?;
         let edge_spatial = SpatialIndex::open(options.storage_dir.join("edge_spatial.bin"))?;
         let nodes = TableFile::<Node>::open_read_only(options.storage_dir.join("nodes.bin"))?;
         let ways = TableFile::<Way>::open_read_only(options.storage_dir.join("ways.bin"))?;
+        nodes.header()?.verify()?;
+        ways.header()?.verify()?;
         Ok(Self {
             profiles: PROFILES.to_vec(),
-            spatial,
+            node_spatial,
             edge_spatial,
             nodes,
             ways,
