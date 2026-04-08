@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{Error, Result},
-    graph::{RoadGraph, TravelTimeCost, haversine_m},
+    graph::{RoadGraph, SpeedMap, haversine_m},
     locate::SnapMode,
     snap::{EdgeSnapper, Snap},
     virtual_graph::{VIRTUAL_GOAL, VIRTUAL_START, VirtualGraph},
@@ -246,7 +246,10 @@ impl Service {
             let inner = RoadGraph {
                 nodes: &self.nodes,
                 ways: &self.ways,
-                cost_model: TravelTimeCost { profile },
+                cost_model: SpeedMap {
+                    profile,
+                    speed_config: &self.speed_config,
+                },
                 goal_pos: goal_snap.pos(),
             };
             let (graph, start_idx, goal_idx) = VirtualGraph::new(inner, start_snap, goal_snap);

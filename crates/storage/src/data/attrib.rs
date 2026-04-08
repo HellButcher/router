@@ -47,7 +47,100 @@ pub enum HighwayClass {
     Footway = 18,
     Cycleway = 19,
     Path = 20,
+    Bridleway = 21,
 }
 
 unsafe impl bytemuck::Zeroable for HighwayClass {}
 unsafe impl bytemuck::Pod for HighwayClass {}
+
+impl HighwayClass {
+    /// Number of `HighwayClass` variants.
+    pub const COUNT: usize = 22;
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::Motorway => "motorway",
+            Self::Trunk => "trunk",
+            Self::Primary => "primary",
+            Self::Secondary => "secondary",
+            Self::Tertiary => "tertiary",
+            Self::MotorwayLink => "motorway_link",
+            Self::TrunkLink => "trunk_link",
+            Self::PrimaryLink => "primary_link",
+            Self::SecondaryLink => "secondary_link",
+            Self::TertiaryLink => "tertiary_link",
+            Self::Unclassified => "unclassified",
+            Self::Residential => "residential",
+            Self::LivingStreet => "living_street",
+            Self::Service => "service",
+            Self::Track => "track",
+            Self::Road => "road",
+            Self::Pedestrian => "pedestrian",
+            Self::Footway => "footway",
+            Self::Cycleway => "cycleway",
+            Self::Path => "path",
+            Self::Bridleway => "bridleway",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<Self> {
+        match s {
+            "unknown" => Some(Self::Unknown),
+            "motorway" => Some(Self::Motorway),
+            "trunk" => Some(Self::Trunk),
+            "primary" => Some(Self::Primary),
+            "secondary" => Some(Self::Secondary),
+            "tertiary" => Some(Self::Tertiary),
+            "motorway_link" => Some(Self::MotorwayLink),
+            "trunk_link" => Some(Self::TrunkLink),
+            "primary_link" => Some(Self::PrimaryLink),
+            "secondary_link" => Some(Self::SecondaryLink),
+            "tertiary_link" => Some(Self::TertiaryLink),
+            "unclassified" => Some(Self::Unclassified),
+            "residential" => Some(Self::Residential),
+            "living_street" => Some(Self::LivingStreet),
+            "service" => Some(Self::Service),
+            "track" => Some(Self::Track),
+            "road" => Some(Self::Road),
+            "pedestrian" => Some(Self::Pedestrian),
+            "footway" => Some(Self::Footway),
+            "cycleway" => Some(Self::Cycleway),
+            "path" => Some(Self::Path),
+            "bridleway" => Some(Self::Bridleway),
+            _ => None,
+        }
+    }
+}
+
+/// Road surface quality tier, derived from OSM `surface`, `smoothness`, and `tracktype` tags.
+/// Stored as one byte per way; used by profiles to compute a per-vehicle speed penalty.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum SurfaceQuality {
+    /// No surface tag — profile default speed applied without penalty.
+    #[default]
+    Unknown = 0,
+    /// Smooth asphalt / concrete; smoothness=excellent or good.
+    Excellent = 1,
+    /// Paving stones, sett; tracktype=grade1.
+    Good = 2,
+    /// Cobblestone, compacted gravel; tracktype=grade2; smoothness=intermediate.
+    Intermediate = 3,
+    /// Fine gravel, shells; tracktype=grade3; smoothness=bad.
+    Bad = 4,
+    /// Gravel, ground, dirt; tracktype=grade4; smoothness=very_bad.
+    VeryBad = 5,
+    /// Grass, sand; tracktype=grade5; smoothness=horrible or very_horrible.
+    Horrible = 6,
+    /// Ice, snow; smoothness=impassable.
+    Impassable = 7,
+}
+
+unsafe impl bytemuck::Zeroable for SurfaceQuality {}
+// SAFETY: SurfaceQuality is repr(u8). Values 8–255 are never written by this codebase;
+// any such byte read from disk will be treated as Impassable (safe worst-case behaviour).
+unsafe impl bytemuck::Pod for SurfaceQuality {}
+
+/// Number of `SurfaceQuality` variants — length of `surface_pct` arrays in profiles.
+pub const SURFACE_QUALITY_COUNT: usize = 8;

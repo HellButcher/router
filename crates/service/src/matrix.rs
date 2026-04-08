@@ -12,8 +12,8 @@ use router_storage::tablefile::TableFile;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::graph::{CostModel, RoadGraph, TravelTimeCost, haversine_m};
-use crate::profile::{Profile, VehicleType};
+use crate::graph::{CostModel, RoadGraph, SpeedMap, haversine_m};
+use crate::profile::VehicleType;
 use crate::snap::{EdgeSnap, EdgeSnapper, Snap};
 use crate::virtual_graph::{VIRTUAL_START, VirtualGraph};
 
@@ -162,7 +162,11 @@ impl Service {
         }
 
         // Run one SSMT per unique origin, parallelised across origins.
-        // TableFile and Profile are Send + Sync (mmap-backed, read-only).
+        // SpeedMap is Copy (two shared refs) and Send + Sync.
+        let speed_map = SpeedMap {
+            profile,
+            speed_config: &self.speed_config,
+        };
         let routed: Vec<(usize, MatrixResponseEntry)> = by_origin
             .into_par_iter()
             .flat_map(|(from_idx, dest_pairs)| {
@@ -173,7 +177,7 @@ impl Service {
                     &to_snaps,
                     &self.nodes,
                     &self.ways,
-                    profile,
+                    speed_map,
                 )
             })
             .collect();
@@ -197,14 +201,14 @@ impl Service {
 
 // ── Per-origin SSMT computation ───────────────────────────────────────────────
 
-fn compute_origin(
+fn compute_origin<C: CostModel + Copy>(
     from_idx: usize,
     dest_pairs: &[(usize, usize)], // (pair_idx, dest_idx)
     from_snaps: &[Snap],
     to_snaps: &[Snap],
     nodes: &TableFile<Node>,
     ways: &TableFile<Way>,
-    profile: &Profile,
+    cost_model: C,
 ) -> Vec<(usize, MatrixResponseEntry)> {
     let from_snap = &from_snaps[from_idx];
 
@@ -222,20 +226,13 @@ fn compute_origin(
         }
     }
 
-    // Build a VirtualGraph that injects a virtual start for edge-snapped
-    // origins.  No virtual goal needed — edge-snapped destinations are
-    // resolved by post-processing settled node costs.
-    let dummy_goal = Snap::Node {
-        node_idx: 0,
-        pos: from_snap.pos(),
-    };
     let inner = RoadGraph {
         nodes,
         ways,
-        cost_model: TravelTimeCost { profile },
+        cost_model,
         goal_pos: from_snap.pos(),
     };
-    let (graph, start_idx, _) = VirtualGraph::new(inner, from_snap, &dummy_goal);
+    let (graph, start_idx) = VirtualGraph::new_from_start(inner, from_snap);
 
     let (time_costs, predecessors) = dijkstra_ssmt(&graph, start_idx, &target_nodes);
 
@@ -243,8 +240,7 @@ fn compute_origin(
     for &(pair_idx, to_idx) in dest_pairs {
         let to_snap = &to_snaps[to_idx];
 
-        let Some((cost_ms, end_node)) =
-            destination_cost(to_snap, &time_costs, ways, nodes, profile)
+        let Some((cost_ms, end_node)) = destination_cost(to_snap, &time_costs, ways, cost_model)
         else {
             continue; // unreachable — omit
         };
@@ -305,32 +301,26 @@ fn snaps_identical(a: &Snap, b: &Snap) -> bool {
 /// Compute the travel-time cost (ms) and the real graph node used to reach an
 /// edge-snapped or node-snapped destination, given settled node costs from an
 /// SSMT run.  Returns `None` if the destination is unreachable.
-fn destination_cost(
+fn destination_cost<C: CostModel>(
     to_snap: &Snap,
     time_costs: &HashMap<usize, usize>,
     ways: &TableFile<Way>,
-    nodes: &TableFile<Node>,
-    profile: &Profile,
+    cost_model: C,
 ) -> Option<(usize, usize)> {
     match to_snap {
         Snap::Node { node_idx, .. } => time_costs.get(node_idx).map(|&c| (c, *node_idx)),
-        Snap::Edge(e) => edge_destination_cost(e, time_costs, ways, nodes, profile),
+        Snap::Edge(e) => edge_destination_cost(e, time_costs, ways, cost_model),
     }
 }
 
-fn edge_destination_cost(
+fn edge_destination_cost<C: CostModel>(
     e: &EdgeSnap,
     time_costs: &HashMap<usize, usize>,
     ways: &TableFile<Way>,
-    nodes: &TableFile<Node>,
-    profile: &Profile,
+    cost_model: C,
 ) -> Option<(usize, usize)> {
     let way = ways.get(e.way_idx).ok()?;
-    let from_node = nodes.get(e.from_node_idx).ok()?;
-    let to_node = nodes.get(e.to_node_idx).ok()?;
-
-    let cost_model = TravelTimeCost { profile };
-    let full_cost = cost_model.edge_cost(&way, &from_node, &to_node)?;
+    let full_cost = cost_model.edge_cost(&way)?;
 
     // Approaching from the way's from-node (forward direction).
     let via_from = time_costs.get(&e.from_node_idx).map(|&base| {

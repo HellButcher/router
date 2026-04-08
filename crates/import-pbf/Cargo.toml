@@ -12,6 +12,12 @@ tracing.workspace = true
 bitflags.workspace = true
 crossbeam-channel.workspace = true
 thiserror.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+toml = "0.8"
+geo = "0.28"
+rstar = "0.12"
+geojson = { version = "0.24", features = ["geo-types"] }
 
 router-types.workspace = true
 router-storage.workspace = true

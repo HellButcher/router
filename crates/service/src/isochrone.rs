@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::common::Points;
 use crate::error::{Error, Result};
-use crate::graph::{DistanceCost, RoadGraph, TravelTimeCost};
+use crate::graph::{DistanceCost, RoadGraph, SpeedMap};
 use crate::profile::Profile;
 use crate::snap::{EdgeSnapper, Snap};
 use crate::virtual_graph::{VIRTUAL_START, VirtualGraph};
@@ -121,6 +121,7 @@ impl Service {
             &self.nodes,
             &self.ways,
             profile,
+            &self.speed_config,
             request.unit,
         );
 
@@ -176,13 +177,9 @@ fn run_isochrone(
     nodes: &TableFile<Node>,
     ways: &TableFile<Way>,
     profile: &Profile,
+    speed_config: &crate::speed_config::SpeedConfig,
     unit: IsochroneUnit,
 ) -> HashMap<usize, usize> {
-    // A dummy goal is required to build the VirtualGraph; it is never reached.
-    let dummy_goal = Snap::Node {
-        node_idx: 0,
-        pos: origin_snap.pos(),
-    };
     match unit {
         IsochroneUnit::Km | IsochroneUnit::Mi => {
             let inner = RoadGraph {
@@ -193,17 +190,20 @@ fn run_isochrone(
                 },
                 goal_pos: origin_snap.pos(),
             };
-            let (graph, start_idx, _) = VirtualGraph::new(inner, origin_snap, &dummy_goal);
+            let (graph, start_idx) = VirtualGraph::new_from_start(inner, origin_snap);
             dijkstra_within_budget(&graph, start_idx, max_cost)
         }
         IsochroneUnit::Min => {
             let inner = RoadGraph {
                 nodes,
                 ways,
-                cost_model: TravelTimeCost { profile },
+                cost_model: SpeedMap {
+                    profile,
+                    speed_config,
+                },
                 goal_pos: origin_snap.pos(),
             };
-            let (graph, start_idx, _) = VirtualGraph::new(inner, origin_snap, &dummy_goal);
+            let (graph, start_idx) = VirtualGraph::new_from_start(inner, origin_snap);
             dijkstra_within_budget(&graph, start_idx, max_cost)
         }
     }

@@ -23,6 +23,7 @@ pub async fn serve(args: &ServeArgs) -> anyhow::Result<()> {
 
     let service = Arc::new(Service::open(ServiceOptions {
         storage_dir: args.storage_dir.clone(),
+        speed_config_path: args.speed_config.clone(),
         ..Default::default()
     })?);
 

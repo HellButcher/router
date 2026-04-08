@@ -105,7 +105,7 @@ define_tag_enum! {
 }
 
 impl Access {
-    fn is_excluded(self) -> bool {
+    pub fn is_excluded(self) -> bool {
         matches!(
             self,
             Self::no
@@ -163,6 +163,36 @@ define_tag_enum! {
         horrible,
         very_horrible,
         impassable
+    }
+}
+
+define_tag_enum! {
+    pub enum TrackType {
+        grade1,
+        grade2,
+        grade3,
+        grade4,
+        grade5,
+    }
+}
+
+define_tag_enum! {
+    pub enum Junction {
+        /// Roundabout — implies oneway circulation.
+        roundabout,
+        /// Circular road — implies oneway circulation.
+        circular,
+        /// US jughandle ramp — does NOT imply oneway on the junction tag alone.
+        jughandle,
+        /// Interchange (motorway-style split).
+        interchange,
+    }
+}
+
+impl Junction {
+    /// Returns `true` if this junction type implies a one-way direction restriction.
+    pub fn implies_oneway(self) -> bool {
+        matches!(self, Self::roundabout | Self::circular)
     }
 }
 
@@ -263,7 +293,7 @@ pub enum Conditional<'s, T> {
 
 impl<'s, T: FromTag> Conditional<'s, T> {
     pub fn is_none(&self) -> bool {
-        !matches!(self, Self::None)
+        matches!(self, Self::None)
     }
 
     fn add(&mut self, mode: Mode, direction: Direction, condition: Option<&'s str>, value: T) {
@@ -346,11 +376,14 @@ pub struct WayTags<'s> {
     pub toll: Option<bool>,
     pub surface: Option<Surface>,
     pub smoothness: Option<Smoothness>,
+    pub tracktype: Option<TrackType>,
+    pub junction: Option<Junction>,
     pub motorroad: bool,
     pub disused: bool,
     pub abandoned: bool,
-    /// Parsed `maxspeed` value in km/h, if present and valid.
-    pub max_speed: Option<u8>,
+    /// Raw value of the `maxspeed` tag, unparsed. Use [`parse_max_speed`] with a
+    /// named-value map to resolve this to km/h.
+    pub raw_max_speed: Option<&'s str>,
 }
 
 /*
@@ -369,10 +402,12 @@ impl<'s> WayTags<'s> {
             "toll" => self.toll = FromTag::from_tag(v),
             "surface" => self.surface = FromTag::from_tag(v),
             "smoothness" => self.smoothness = FromTag::from_tag(v),
+            "tracktype" => self.tracktype = FromTag::from_tag(v),
+            "junction" => self.junction = FromTag::from_tag(v),
             "motorroad" => self.motorroad = FromTag::from_tag(v),
             "disused" => self.disused = FromTag::from_tag(v),
             "abandoned" => self.abandoned = FromTag::from_tag(v),
-            "maxspeed" => self.max_speed = parse_max_speed(v),
+            "maxspeed" => self.raw_max_speed = Some(v),
             _ => {
                 let mut k2 = k;
                 if let Some(p) = k2.find(':') {
@@ -468,17 +503,31 @@ impl<'s> WayTags<'s> {
     }
     */
     pub fn is_excluded(&self) -> bool {
-        self.highway.is_none_or(|h| h.is_excluded()) || self.access.is_excluded()
+        self.highway.is_none_or(|h| h.is_excluded())
+            || self.access.is_excluded()
+            || self.disused
+            || self.abandoned
     }
 }
 
 /// Parse an OSM `maxspeed` tag value into km/h, capped at 255.
 ///
-/// Handles plain integers (`"50"`), `"XX mph"`, and common named values
-/// (`"walk"`, `"living_street"`, `"urban"`, `"rural"`, `"motorway"`).
-fn parse_max_speed(v: &str) -> Option<u8> {
+/// Lookup order:
+/// 1. `named` map — handles any named value including country-coded ones
+///    (`"DE:urban"`, `"GB:nsl_dual"`) and can override generics (`"urban"`, `"walk"`).
+/// 2. Built-in fallbacks for generic names (for when the map has no entry).
+/// 3. Imperial suffix (`"30 mph"`).
+/// 4. Plain integer km/h.
+///
+/// Returns `None` for unrecognised named values, letting the caller fall back
+/// to the profile's highway-class default.
+pub fn parse_max_speed(v: &str, named: &std::collections::HashMap<String, u8>) -> Option<u8> {
     let v = v.trim();
-    // Named values
+    // Config map takes priority over everything — covers both "DE:urban" and "urban".
+    if let Some(&kmh) = named.get(v) {
+        return Some(kmh);
+    }
+    // Built-in fallbacks for generic names not present in the map.
     match v {
         "walk" | "walking" => return Some(7),
         "living_street" => return Some(10),

@@ -1,6 +1,6 @@
 use std::{hash::Hasher, marker::PhantomData, mem::size_of};
 
-use crate::{pod::TablePod, tablefile::TableData};
+use crate::pod::TablePod;
 
 use self::{
     node::{NO_WAY, Node, NodeId},

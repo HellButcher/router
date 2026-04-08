@@ -40,6 +40,13 @@ pub struct WayMeta {
     pub highway: String,
     /// Explicit max speed in km/h; 0 means use highway-class default.
     pub max_speed: u8,
+    /// Surface quality tier (e.g. `"Excellent"`, `"Good"`, `"Bad"`).
+    pub surface_quality: String,
+    /// ISO 3166-1 alpha-2 country code, or `null` if unknown.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub country_id: Option<String>,
+    /// Haversine distance between the two endpoint nodes in metres.
+    pub dist_m: u16,
     pub oneway: bool,
     pub no_motor: bool,
     pub no_hgv: bool,
@@ -57,6 +64,9 @@ impl WayMeta {
             id: way.id.0,
             highway: format!("{:?}", way.highway),
             max_speed: way.max_speed,
+            surface_quality: format!("{:?}", way.surface_quality),
+            country_id: way.country_id.to_iso2().map(str::to_owned),
+            dist_m: way.dist_m,
             oneway: way.flags.contains(WayFlags::ONEWAY),
             no_motor: way.flags.contains(WayFlags::NO_MOTOR),
             no_hgv: way.flags.contains(WayFlags::NO_HGV),

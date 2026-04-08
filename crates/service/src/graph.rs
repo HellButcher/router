@@ -1,16 +1,19 @@
 use router_algorithm::{Edge, Graph};
 use router_storage::{
     data::{
-        attrib::WayFlags,
+        attrib::{HighwayClass, WayFlags},
         node::{NO_WAY, Node},
         way::Way,
         way_index_from_ptr,
     },
     tablefile::TableFile,
 };
-use router_types::coordinate::LatLon;
+use router_types::{coordinate::LatLon, country::CountryId};
 
-use crate::profile::{Profile, VehicleType};
+use crate::{
+    profile::{Profile, VehicleType},
+    speed_config::SpeedConfig,
+};
 
 // ── CostModel trait ───────────────────────────────────────────────────────────
 
@@ -20,11 +23,7 @@ use crate::profile::{Profile, VehicleType};
 /// Implementations must ensure that `heuristic` never overestimates the true
 /// edge cost so that A* remains correct and optimal.
 pub trait CostModel: Send + Sync {
-    /// Returns the cost to traverse `way` from `from` to `to`, or `None` if
-    /// the way is inaccessible under this model.
-    fn edge_cost(&self, way: &Way, from: &Node, to: &Node) -> Option<usize>;
-
-    /// Admissible lower-bound estimate of the cost from `from` to `to`.
+    fn edge_cost(&self, way: &Way) -> Option<usize>;
     fn heuristic(&self, from: LatLon, to: LatLon) -> usize;
 }
 
@@ -36,11 +35,11 @@ pub struct DistanceCost {
 }
 
 impl CostModel for DistanceCost {
-    fn edge_cost(&self, way: &Way, from: &Node, to: &Node) -> Option<usize> {
+    fn edge_cost(&self, way: &Way) -> Option<usize> {
         if way_is_blocked(way, self.vehicle_type) {
             return None;
         }
-        Some(haversine_m(from.pos, to.pos) as usize)
+        Some(way.dist_m as usize)
     }
 
     fn heuristic(&self, from: LatLon, to: LatLon) -> usize {
@@ -48,40 +47,68 @@ impl CostModel for DistanceCost {
     }
 }
 
-// ── Travel-time cost ──────────────────────────────────────────────────────────
+// ── SpeedMap ──────────────────────────────────────────────────────────────────
 
-/// Costs edges by estimated travel time in milliseconds, using the effective
-/// maximum speed capped at the vehicle's own maximum speed.
-pub struct TravelTimeCost<'p> {
+/// Combines a routing profile with optional country-specific speed overrides.
+///
+/// Speed resolution order:
+/// 1. Country+profile override from `speed_config` (if loaded and country known)
+/// 2. Profile built-in default for the highway class
+/// 3. Way's explicit `max_speed` tag (overrides the default)
+/// 4. Surface quality penalty applied as a percentage multiplier
+/// 5. Capped at the vehicle's physical maximum speed
+#[derive(Copy, Clone)]
+pub struct SpeedMap<'p> {
     pub profile: &'p Profile,
+    pub speed_config: &'p SpeedConfig,
 }
 
-impl CostModel for TravelTimeCost<'_> {
-    fn edge_cost(&self, way: &Way, from: &Node, to: &Node) -> Option<usize> {
-        // Access check
-        if way_is_blocked(way, self.profile.vehicle_type) {
-            return None;
-        }
-        let default_speed = self.profile.default_speed(way.highway);
-        if default_speed == 0 {
-            // Highway class not permitted for this vehicle type.
+impl SpeedMap<'_> {
+    /// Default speed in km/h for the given way, before max_speed and surface adjustments.
+    /// Returns 0 if the highway class is forbidden for this profile.
+    #[inline]
+    pub fn default_speed(&self, country_id: CountryId, highway: HighwayClass) -> u8 {
+        self.speed_config
+            .default_speed(country_id, self.profile.vehicle_type, highway)
+            .unwrap_or_else(|| self.profile.default_speed(highway))
+    }
+
+    /// Effective speed in km/h for the given way after all adjustments.
+    /// Returns `None` if the way is forbidden (speed 0 or impassable surface).
+    #[inline]
+    pub fn effective_speed(&self, way: &Way) -> Option<u8> {
+        let default = self.default_speed(way.country_id, way.highway);
+        if default == 0 {
             return None;
         }
         let speed = way
-            .effective_max_speed(default_speed)
+            .effective_max_speed(default)
             .min(self.profile.max_speed_kmh);
-        let dist_m = haversine_m(from.pos, to.pos);
-        // cost in milliseconds: (dist_m / speed_m_per_s) * 1000
-        // speed_m_per_s = speed_kmh * 1000 / 3600
-        // → cost_ms = dist_m * 3600 / speed_kmh
-        let cost_ms = (dist_m * 3600.0 / speed as f32) as usize;
-        Some(cost_ms)
+        let surface_pct = self.profile.surface_pct[way.surface_quality as usize];
+        if surface_pct == 0 {
+            return None;
+        }
+        Some(((speed as u32 * surface_pct as u32) / 100).max(1) as u8)
+    }
+
+    /// Travel-time cost in milliseconds for the given way, or `None` if blocked/impassable.
+    #[inline]
+    pub fn way_cost_ms(&self, way: &Way) -> Option<usize> {
+        if way_is_blocked(way, self.profile.vehicle_type) {
+            return None;
+        }
+        let speed = self.effective_speed(way)?;
+        Some((way.dist_m as f32 * 3600.0 / speed as f32) as usize)
+    }
+}
+
+impl CostModel for SpeedMap<'_> {
+    fn edge_cost(&self, way: &Way) -> Option<usize> {
+        self.way_cost_ms(way)
     }
 
     fn heuristic(&self, from: LatLon, to: LatLon) -> usize {
-        // Lower bound: travel at vehicle's maximum speed over straight-line dist.
-        let dist_m = haversine_m(from, to);
-        (dist_m * 3600.0 / self.profile.max_speed_kmh as f32) as usize
+        (haversine_m(from, to) * 3600.0 / self.profile.max_speed_kmh as f32) as usize
     }
 }
 
@@ -149,7 +176,6 @@ impl<C: CostModel> Graph for RoadGraph<'_, C> {
 pub struct WayIter<'a, C: CostModel> {
     graph: &'a RoadGraph<'a, C>,
     current_ptr: u64,
-    /// `false` = following `next_way` (outbound), `true` = `next_way_reverse` (inbound).
     reverse: bool,
 }
 
@@ -167,49 +193,25 @@ impl<C: CostModel> Iterator for WayIter<'_, C> {
                 }
             };
 
-            // Advance pointer before any early-continues.
             self.current_ptr = if self.reverse {
                 way.next_way_reverse()
             } else {
                 way.next_way()
             };
 
-            // All stored ways are forward-directed; inbound traversal of a
-            // oneway is not permitted.
             if self.reverse && way.flags.contains(WayFlags::ONEWAY) {
                 continue;
             }
 
-            // After node-index resolution from_node_idx / to_node_idx are direct
-            // table indices — no binary search needed.
             let way_from_idx = way.from_node_idx as usize;
             let way_to_idx = way.to_node_idx as usize;
-            // The neighbour we are travelling toward.
             let neighbour_idx = if self.reverse {
                 way_from_idx
             } else {
                 way_to_idx
             };
 
-            // Always pass nodes in the way's stored direction to edge_cost so
-            // that asymmetric cost models (e.g. directional speed limits) see
-            // (from_node, to_node) consistently, regardless of traversal direction.
-            let way_from = match self.graph.nodes.get(way_from_idx) {
-                Ok(n) => n,
-                Err(e) => {
-                    tracing::warn!(way_from_idx, error = %e, "nodes.get failed");
-                    continue;
-                }
-            };
-            let way_to = match self.graph.nodes.get(way_to_idx) {
-                Ok(n) => n,
-                Err(e) => {
-                    tracing::warn!(way_to_idx, error = %e, "nodes.get failed");
-                    continue;
-                }
-            };
-
-            if let Some(cost) = self.graph.cost_model.edge_cost(&way, &way_from, &way_to) {
+            if let Some(cost) = self.graph.cost_model.edge_cost(&way) {
                 return Some(Edge {
                     node: neighbour_idx,
                     cost,
@@ -219,15 +221,16 @@ impl<C: CostModel> Iterator for WayIter<'_, C> {
     }
 }
 
-// ── Geometry helpers ──────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Returns whether a way is blocked for the given vehicle type based on its flags.
 pub(crate) fn way_is_blocked(way: &Way, vehicle: VehicleType) -> bool {
     match vehicle {
         VehicleType::Car => way.flags.contains(WayFlags::NO_MOTOR),
         VehicleType::Hgv => {
             way.flags.contains(WayFlags::NO_MOTOR) || way.flags.contains(WayFlags::NO_HGV)
         }
+        VehicleType::Bicycle => way.flags.contains(WayFlags::NO_BICYCLE),
+        VehicleType::Foot => way.flags.contains(WayFlags::NO_FOOT),
     }
 }
 
@@ -239,7 +242,5 @@ pub fn haversine_m(a: LatLon, b: LatLon) -> f32 {
     let dlat = (b.lat - a.lat).to_radians();
     let dlon = (b.lon - a.lon).to_radians();
     let s = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
-    // Clamp to [0, 1] to guard against f32 rounding producing values slightly
-    // outside that range, which would make sqrt().asin() return NaN.
     2.0 * R * s.clamp(0.0, 1.0).sqrt().asin()
 }

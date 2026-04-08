@@ -32,6 +32,25 @@ pub struct VirtualGraph<'a, C: CostModel> {
 }
 
 impl<'a, C: CostModel> VirtualGraph<'a, C> {
+    /// Build a `VirtualGraph` with only a start snap (no goal).
+    ///
+    /// Returns `(graph, effective_start_idx)`. Use this for multi-target
+    /// searches (matrix, isochrone) where there is no single goal.
+    pub fn new_from_start(inner: RoadGraph<'a, C>, start_snap: &Snap) -> (Self, usize) {
+        let (start, start_idx) = match start_snap {
+            Snap::Node { node_idx, .. } => (None, *node_idx),
+            Snap::Edge(e) => (Some(virtual_start_endpoint(e, &inner)), VIRTUAL_START),
+        };
+        (
+            Self {
+                inner,
+                start,
+                goal: None,
+            },
+            start_idx,
+        )
+    }
+
     /// Build a `VirtualGraph` from two snapped waypoints.
     ///
     /// Returns `(graph, effective_start_idx, effective_goal_idx)` — the
@@ -57,40 +76,33 @@ impl<'a, C: CostModel> VirtualGraph<'a, C> {
         // between the two snap points).
         if let (Snap::Edge(s), Snap::Edge(g), Some(vs), Some(vg)) =
             (start_snap, goal_snap, vstart.as_mut(), vgoal.as_mut())
+            && s.way_idx == g.way_idx
+            && let Ok(way) = inner.ways.get(s.way_idx)
+            && let Some(full_cost) = inner.cost_model.edge_cost(&way)
         {
-            if s.way_idx == g.way_idx {
-                if let (Ok(way), Ok(from), Ok(to)) = (
-                    inner.ways.get(s.way_idx),
-                    inner.nodes.get(s.from_node_idx),
-                    inner.nodes.get(s.to_node_idx),
-                ) {
-                    if let Some(full_cost) = inner.cost_model.edge_cost(&way, &from, &to) {
-                        let frac_diff = g.fraction - s.fraction;
-                        if frac_diff >= 0.0 {
-                            // Goal is ahead of start along the way's direction.
-                            let cost = (frac_diff * full_cost as f32) as usize;
-                            vs.adjacent.push(Edge {
-                                node: VIRTUAL_GOAL,
-                                cost,
-                            });
-                            vg.adjacent.push(Edge {
-                                node: VIRTUAL_START,
-                                cost,
-                            });
-                        } else if !way.flags.contains(WayFlags::ONEWAY) {
-                            // Goal is behind start; only valid on bidirectional ways.
-                            let cost = ((-frac_diff) * full_cost as f32) as usize;
-                            vs.adjacent.push(Edge {
-                                node: VIRTUAL_GOAL,
-                                cost,
-                            });
-                            vg.adjacent.push(Edge {
-                                node: VIRTUAL_START,
-                                cost,
-                            });
-                        }
-                    }
-                }
+            let frac_diff = g.fraction - s.fraction;
+            if frac_diff >= 0.0 {
+                // Goal is ahead of start along the way's direction.
+                let cost = (frac_diff * full_cost as f32) as usize;
+                vs.adjacent.push(Edge {
+                    node: VIRTUAL_GOAL,
+                    cost,
+                });
+                vg.adjacent.push(Edge {
+                    node: VIRTUAL_START,
+                    cost,
+                });
+            } else if !way.flags.contains(WayFlags::ONEWAY) {
+                // Goal is behind start; only valid on bidirectional ways.
+                let cost = ((-frac_diff) * full_cost as f32) as usize;
+                vs.adjacent.push(Edge {
+                    node: VIRTUAL_GOAL,
+                    cost,
+                });
+                vg.adjacent.push(Edge {
+                    node: VIRTUAL_START,
+                    cost,
+                });
             }
         }
 
@@ -208,17 +220,13 @@ fn virtual_start_endpoint<C: CostModel>(
     graph: &RoadGraph<'_, C>,
 ) -> VirtualEndpoint {
     let mut adjacent = Vec::with_capacity(2);
-    let (Ok(way), Ok(from), Ok(to)) = (
-        graph.ways.get(snap.way_idx),
-        graph.nodes.get(snap.from_node_idx),
-        graph.nodes.get(snap.to_node_idx),
-    ) else {
+    let Ok(way) = graph.ways.get(snap.way_idx) else {
         return VirtualEndpoint {
             pos: snap.pos,
             adjacent,
         };
     };
-    if let Some(full_cost) = graph.cost_model.edge_cost(&way, &from, &to) {
+    if let Some(full_cost) = graph.cost_model.edge_cost(&way) {
         let cost_to_snap = (snap.fraction * full_cost as f32) as usize;
         let cost_from_snap = ((1.0 - snap.fraction) * full_cost as f32) as usize;
 
@@ -244,17 +252,13 @@ fn virtual_goal_endpoint<C: CostModel>(
     graph: &RoadGraph<'_, C>,
 ) -> VirtualEndpoint {
     let mut adjacent = Vec::with_capacity(2);
-    let (Ok(way), Ok(from), Ok(to)) = (
-        graph.ways.get(snap.way_idx),
-        graph.nodes.get(snap.from_node_idx),
-        graph.nodes.get(snap.to_node_idx),
-    ) else {
+    let Ok(way) = graph.ways.get(snap.way_idx) else {
         return VirtualEndpoint {
             pos: snap.pos,
             adjacent,
         };
     };
-    if let Some(full_cost) = graph.cost_model.edge_cost(&way, &from, &to) {
+    if let Some(full_cost) = graph.cost_model.edge_cost(&way) {
         let cost_to_snap = (snap.fraction * full_cost as f32) as usize;
         let cost_from_snap = ((1.0 - snap.fraction) * full_cost as f32) as usize;
 

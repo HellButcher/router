@@ -180,16 +180,11 @@ pub fn bidir_dijkstra(graph: impl Graph, start: usize, goal: usize) -> Option<(V
     // pred_b[node] = the node that was expanded when `node` was discovered,
     // i.e. the successor in the forward direction.
     cur = meeting;
-    loop {
-        match pred_b.get(&cur) {
-            Some(&next) => {
-                cur = next;
-                path.push(cur);
-                if cur == goal {
-                    break;
-                }
-            }
-            None => break,
+    while let Some(&next) = pred_b.get(&cur) {
+        cur = next;
+        path.push(cur);
+        if cur == goal {
+            break;
         }
     }
 

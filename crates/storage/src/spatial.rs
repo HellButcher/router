@@ -129,8 +129,8 @@ impl SpatialIndex {
         }
 
         let mut level_starts = [0usize; MAX_LEVELS];
-        for i in 0..num_levels {
-            let byte_off = hdr.level_offsets[i] as usize;
+        for (i, &off) in hdr.level_offsets[..num_levels].iter().enumerate() {
+            let byte_off = off as usize;
             if byte_off < HEADER_DISK_SIZE
                 || !(byte_off - HEADER_DISK_SIZE).is_multiple_of(size_of::<RTreeEntry>())
             {
@@ -199,10 +199,13 @@ impl SpatialIndex {
 
         let root = self.num_levels - 1;
         let root_start = self.level_start(root);
-        for i in root_start..root_start + self.level_len(root) {
-            let d = min_dist_to_bbox_m(lat, lon, &entries[i]);
+        for (i, e) in entries[root_start..root_start + self.level_len(root)]
+            .iter()
+            .enumerate()
+        {
+            let d = min_dist_to_bbox_m(lat, lon, e);
             if d <= max_radius_m {
-                heap.push((Reverse(d.to_bits()), i, root));
+                heap.push((Reverse(d.to_bits()), root_start + i, root));
             }
         }
 
@@ -215,10 +218,10 @@ impl SpatialIndex {
             }
             let e = &entries[idx];
             if level == 0 {
-                if let Some((true_dist, payload)) = refine(e, bbox_dist) {
-                    if true_dist <= cutoff {
-                        best = Some((true_dist, payload));
-                    }
+                if let Some((true_dist, payload)) = refine(e, bbox_dist)
+                    && true_dist <= cutoff
+                {
+                    best = Some((true_dist, payload));
                 }
                 continue;
             }
@@ -226,10 +229,10 @@ impl SpatialIndex {
             let local = idx - self.level_start(level);
             let child_start = self.level_start(child_level) + local * self.node_size;
             let child_end = (child_start + self.node_size).min(self.level_start(level));
-            for ci in child_start..child_end {
-                let d = min_dist_to_bbox_m(lat, lon, &entries[ci]);
+            for (ci, ce) in entries[child_start..child_end].iter().enumerate() {
+                let d = min_dist_to_bbox_m(lat, lon, ce);
                 if d <= cutoff {
-                    heap.push((Reverse(d.to_bits()), ci, child_level));
+                    heap.push((Reverse(d.to_bits()), child_start + ci, child_level));
                 }
             }
         }

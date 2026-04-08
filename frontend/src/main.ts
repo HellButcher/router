@@ -407,6 +407,10 @@ function sidebarTemplate() {
               <div class="locate-info-row"><span>${t.locate.inspect.osmWayId()}</span><span>${locateInfo.way.id}</span></div>
               <div class="locate-info-row"><span>${t.locate.inspect.highway()}</span><span>${locateInfo.way.highway}</span></div>
               <div class="locate-info-row"><span>${t.locate.inspect.maxSpeed()}</span><span>${locateInfo.way.max_speed > 0 ? t.locate.inspect.maxSpeedKmh({ speed: locateInfo.way.max_speed }) : t.locate.inspect.maxSpeedDefault()}</span></div>
+              <div class="locate-info-row"><span>${t.locate.inspect.surfaceQuality()}</span><span>${locateInfo.way.surface_quality}</span></div>
+              ${locateInfo.way.country_id ? html`<div class="locate-info-row"><span>${t.locate.inspect.country()}</span><span>${locateInfo.way.country_id}</span></div>` : ""}
+              <div class="locate-info-row"><span>${t.locate.inspect.distM()}</span><span>${t.locate.inspect.distMValue({ dist: locateInfo.way.dist_m })}</span></div>
+              ${locateInfo.location.fraction != null ? html`<div class="locate-info-row"><span>${t.locate.inspect.fraction()}</span><span>${locateInfo.location.fraction.toFixed(3)}</span></div>` : ""}
               ${flagList(locateInfo.way).length > 0 ? html`<div class="locate-info-row"><span>${t.locate.inspect.flags()}</span><span>${flagList(locateInfo.way).join(", ")}</span></div>` : ""}
               <div class="locate-info-subheader">${t.locate.inspect.fromNode()}</div>
               <div class="locate-info-row"><span>${t.locate.inspect.osmNodeId()}</span><span>${locateInfo.way.from_node.id}</span></div>

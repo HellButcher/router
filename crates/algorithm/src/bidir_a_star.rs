@@ -188,16 +188,11 @@ pub fn bidir_a_star(graph: impl Graph, start: usize, goal: usize) -> Option<(Vec
 
     // Reconstruct backward half: meeting → goal.
     cur = meeting;
-    loop {
-        match pred_b.get(&cur) {
-            Some(&next) => {
-                cur = next;
-                path.push(cur);
-                if cur == goal {
-                    break;
-                }
-            }
-            None => break,
+    while let Some(&next) = pred_b.get(&cur) {
+        cur = next;
+        path.push(cur);
+        if cur == goal {
+            break;
         }
     }
 

@@ -130,6 +130,27 @@ type RootTranslation = {
 			 */
 			maxSpeedDefault: string
 			/**
+			 * S​u​r​f​a​c​e
+			 */
+			surfaceQuality: string
+			/**
+			 * C​o​u​n​t​r​y
+			 */
+			country: string
+			/**
+			 * L​e​n​g​t​h
+			 */
+			distM: string
+			/**
+			 * {​d​i​s​t​}​ ​m
+			 * @param {number} dist
+			 */
+			distMValue: RequiredParams<'dist'>
+			/**
+			 * S​n​a​p​ ​f​r​a​c​t​i​o​n
+			 */
+			fraction: string
+			/**
 			 * F​l​a​g​s
 			 */
 			flags: string
@@ -336,6 +357,26 @@ export type TranslationFunctions = {
 			 * default
 			 */
 			maxSpeedDefault: () => LocalizedString
+			/**
+			 * Surface
+			 */
+			surfaceQuality: () => LocalizedString
+			/**
+			 * Country
+			 */
+			country: () => LocalizedString
+			/**
+			 * Length
+			 */
+			distM: () => LocalizedString
+			/**
+			 * {dist} m
+			 */
+			distMValue: (arg: { dist: number }) => LocalizedString
+			/**
+			 * Snap fraction
+			 */
+			fraction: () => LocalizedString
 			/**
 			 * Flags
 			 */

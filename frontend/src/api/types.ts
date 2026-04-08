@@ -372,6 +372,13 @@ export interface components {
      */
     Unit: "km" | "mi";
     WayMeta: {
+      /** @description ISO 3166-1 alpha-2 country code, or `null` if unknown. */
+      country_id?: string | null;
+      /**
+       * Format: uint16
+       * @description Haversine distance between the two endpoint nodes in metres.
+       */
+      dist_m: number;
       from_node: components["schemas"]["NodeMeta"];
       /** @description Highway classification (e.g. `"Residential"`, `"Primary"`). */
       highway: string;
@@ -390,6 +397,8 @@ export interface components {
       no_hgv: boolean;
       no_motor: boolean;
       oneway: boolean;
+      /** @description Surface quality tier (e.g. `"Excellent"`, `"Good"`, `"Bad"`). */
+      surface_quality: string;
       to_node: components["schemas"]["NodeMeta"];
     };
   };

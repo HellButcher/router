@@ -12,6 +12,7 @@ pub mod meta;
 pub mod profile;
 pub mod route;
 pub mod snap;
+pub mod speed_config;
 pub mod virtual_graph;
 
 use crate::error::{Error, Result};
@@ -21,6 +22,7 @@ use router_storage::{
     spatial::SpatialIndex,
     tablefile::TableFile,
 };
+use speed_config::SpeedConfig;
 
 /// Options for creating a [`Service`].
 pub struct ServiceOptions {
@@ -28,6 +30,8 @@ pub struct ServiceOptions {
     pub storage_dir: PathBuf,
     /// Maximum locate search radius in metres.
     pub max_radius_m: f32,
+    /// Optional path to a TOML file with per-country, per-profile speed overrides.
+    pub speed_config_path: Option<std::path::PathBuf>,
 }
 
 impl Default for ServiceOptions {
@@ -35,6 +39,7 @@ impl Default for ServiceOptions {
         Self {
             storage_dir: PathBuf::from("storage"),
             max_radius_m: 1_000.0,
+            speed_config_path: None,
         }
     }
 }
@@ -46,6 +51,7 @@ pub struct Service {
     pub(crate) nodes: TableFile<Node>,
     pub(crate) ways: TableFile<Way>,
     pub(crate) max_radius_m: f32,
+    pub(crate) speed_config: SpeedConfig,
 }
 
 impl Service {
@@ -56,6 +62,13 @@ impl Service {
         let ways = TableFile::<Way>::open_read_only(options.storage_dir.join("ways.bin"))?;
         nodes.header()?.verify()?;
         ways.header()?.verify()?;
+
+        let speed_config = match options.speed_config_path {
+            Some(ref path) => SpeedConfig::from_file(path)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?,
+            None => SpeedConfig::default(),
+        };
+
         Ok(Self {
             profiles: PROFILES.to_vec(),
             node_spatial,
@@ -63,6 +76,7 @@ impl Service {
             nodes,
             ways,
             max_radius_m: options.max_radius_m,
+            speed_config,
         })
     }
 

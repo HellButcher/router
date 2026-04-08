@@ -7,7 +7,8 @@ pub mod tablefile;
 mod pod {
     unsafe impl<T: bytemuck::AnyBitPattern> TablePod for T {}
 
-    /// # SAFETY:
+    /// # Safety
+    ///
     /// Similar to bytemuck::AnyBitPattern, but we allow to use atomics.
     /// * The type must be inhabited (eg: no Infallible).
     /// * The type must be valid for any bit pattern of its backing memory.

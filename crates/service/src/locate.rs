@@ -115,10 +115,10 @@ impl Service {
                     {
                         loc.coordinate.lat = snapped_lat;
                         loc.coordinate.lon = snapped_lon;
-                        if request.with_meta {
-                            if let Ok(node) = self.nodes.get(node_idx as usize) {
-                                loc.node_meta = Some(NodeMeta::from(&node));
-                            }
+                        if request.with_meta
+                            && let Ok(node) = self.nodes.get(node_idx as usize)
+                        {
+                            loc.node_meta = Some(NodeMeta::from(&node));
                         }
                     }
                 }
@@ -129,10 +129,10 @@ impl Service {
                         loc.coordinate = snap.pos;
                         loc.way_id = NonZeroU64::new(snap.way_id);
                         loc.fraction = Some(snap.fraction);
-                        if request.with_meta {
-                            if let Ok(way) = self.ways.get(snap.way_idx) {
-                                loc.way_meta = WayMeta::from(&way, &self.nodes).ok();
-                            }
+                        if request.with_meta
+                            && let Ok(way) = self.ways.get(snap.way_idx)
+                        {
+                            loc.way_meta = WayMeta::from(&way, &self.nodes).ok();
                         }
                     }
                 }

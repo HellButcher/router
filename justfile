@@ -30,9 +30,19 @@ check-frontend:
 fmt-frontend:
     pnpm run fmt
 
-import pbf='../osm-pbf-benchmark/ireland-and-northern-ireland-latest.osm.pbf':
+boundaries_file := "data/country_boundaries.geojson"
+boundaries_url := "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson"
+
+download-boundaries:
+    #!/usr/bin/env sh
+    if [ ! -f "{{boundaries_file}}" ]; then
+        mkdir -p data
+        curl -fL -o "{{boundaries_file}}" "{{boundaries_url}}"
+    fi
+
+import pbf='../osm-pbf-benchmark/ireland-and-northern-ireland-latest.osm.pbf': download-boundaries
     cargo run --release -- import {{pbf}}
-    
+
 serve: build
     cargo run --release serve
 
