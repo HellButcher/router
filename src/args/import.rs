@@ -1,12 +1,13 @@
-use clap::Args;
 use std::path::PathBuf;
+
+use clap::Args;
 
 #[derive(Clone, Debug, Args)]
 pub struct ImportArgs {
-    /// Path to the source OSM PBF file
-    pub source: PathBuf,
+    /// Path to the source OSM PBF file (overrides config `import.source`)
+    pub source: Option<PathBuf>,
 
-    /// Path to an import config TOML file (named maxspeed values, country boundaries path, …)
+    /// Storage directory for imported data (overrides config `storage.dir`)
     #[clap(long)]
-    pub config: Option<PathBuf>,
+    pub storage_dir: Option<PathBuf>,
 }

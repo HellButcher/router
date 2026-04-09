@@ -6,7 +6,8 @@ use tokio::{net::TcpListener, signal};
 use tower::ServiceBuilder;
 use tower_http::{compression::CompressionLayer, services::ServeDir, trace::TraceLayer};
 
-use crate::args::serve::*;
+use crate::args::serve::ServeArgs;
+use crate::config::RouterConfig;
 
 pub const API_BASE_PATH: &str = "/api/v1";
 
@@ -18,12 +19,14 @@ pub fn print_openapi() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn serve(args: &ServeArgs) -> anyhow::Result<()> {
-    let addr: SocketAddr = args.listen.parse()?;
+pub async fn serve(args: &ServeArgs, config: RouterConfig) -> anyhow::Result<()> {
+    let listen = args.listen.clone().unwrap_or(config.server.listen);
+    let storage_dir = args.storage_dir.clone().unwrap_or(config.storage.dir);
+    let addr: SocketAddr = listen.parse()?;
 
     let service = Arc::new(Service::open(ServiceOptions {
-        storage_dir: args.storage_dir.clone(),
-        speed_config_path: args.speed_config.clone(),
+        storage_dir,
+        speed_config: config.speeds,
         ..Default::default()
     })?);
 

@@ -1,4 +1,3 @@
-pub mod config;
 pub mod country_lookup;
 mod tags;
 
@@ -21,6 +20,7 @@ use router_storage::{
 };
 use router_types::coordinate::LatLon;
 use std::{
+    collections::HashMap,
     fs::File,
     io::{self, BufReader},
     path::{Path, PathBuf},
@@ -29,10 +29,99 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    config::ImportConfig,
     country_lookup::CountryLookup,
     tags::{NodeTags, WayTags},
 };
+
+/// Built-in named maxspeed values.
+/// Keys are OSM `maxspeed` tag values; values are km/h.
+/// Country-coded entries (`"DE:urban"`) take priority over generic ones (`"urban"`).
+static BUILTIN_MAXSPEED: &[(&str, u8)] = &[
+    // Generic
+    ("walk", 7),
+    ("walking", 7),
+    ("living_street", 10),
+    ("urban", 50),
+    ("rural", 90),
+    ("motorway", 130),
+    // Germany
+    ("DE:living_street", 10),
+    ("DE:urban", 50),
+    ("DE:rural", 100),
+    ("DE:motorway", 130),
+    // Austria
+    ("AT:living_street", 10),
+    ("AT:urban", 50),
+    ("AT:rural", 100),
+    ("AT:motorway", 130),
+    // Switzerland
+    ("CH:living_street", 10),
+    ("CH:urban", 50),
+    ("CH:rural", 80),
+    ("CH:motorway", 120),
+    // France
+    ("FR:living_street", 20),
+    ("FR:urban", 50),
+    ("FR:rural", 80),
+    ("FR:motorway", 130),
+    // Netherlands
+    ("NL:living_street", 15),
+    ("NL:urban", 50),
+    ("NL:rural", 80),
+    ("NL:motorway", 100),
+    // Belgium
+    ("BE:living_street", 20),
+    ("BE:urban", 50),
+    ("BE:rural", 90),
+    ("BE:motorway", 120),
+    // Italy
+    ("IT:living_street", 10),
+    ("IT:urban", 50),
+    ("IT:rural", 90),
+    ("IT:motorway", 130),
+    // Spain
+    ("ES:living_street", 20),
+    ("ES:urban", 50),
+    ("ES:rural", 90),
+    ("ES:motorway", 120),
+    // Portugal
+    ("PT:living_street", 20),
+    ("PT:urban", 50),
+    ("PT:rural", 90),
+    ("PT:motorway", 120),
+    // Poland
+    ("PL:living_street", 20),
+    ("PL:urban", 50),
+    ("PL:rural", 90),
+    ("PL:motorway", 140),
+    // Czech Republic
+    ("CZ:living_street", 20),
+    ("CZ:urban", 50),
+    ("CZ:rural", 90),
+    ("CZ:motorway", 130),
+    // United Kingdom
+    ("GB:living_street", 10),
+    ("GB:urban", 48),      // 30 mph
+    ("GB:rural", 96),      // 60 mph
+    ("GB:motorway", 112),  // 70 mph
+    ("GB:nsl_single", 96), // 60 mph National Speed Limit, single carriageway
+    ("GB:nsl_dual", 112),  // 70 mph National Speed Limit, dual carriageway
+    // Russia
+    ("RU:living_street", 20),
+    ("RU:urban", 60),
+    ("RU:rural", 90),
+    ("RU:motorway", 110),
+    // Ukraine
+    ("UA:living_street", 20),
+    ("UA:urban", 60),
+    ("UA:rural", 90),
+    ("UA:motorway", 130),
+    // United States
+    ("US:living_street", 25),
+    ("US:urban", 40),
+    ("US:rural", 88),     // 55 mph
+    ("US:motorway", 104), // 65 mph
+];
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -58,9 +147,6 @@ pub enum Error {
     WayIdNotFound(WayId),
 
     #[error(transparent)]
-    Config(#[from] config::ConfigError),
-
-    #[error(transparent)]
     CountryLookup(#[from] Box<country_lookup::LookupError>),
 }
 
@@ -77,7 +163,8 @@ const REQUIRED_FEATURES: &[&str] = &["Sort.Type_then_ID"];
 pub struct Importer<R> {
     target_dir: PathBuf,
     read: R,
-    config: ImportConfig,
+    country_boundaries: Option<PathBuf>,
+    maxspeed: HashMap<String, u8>,
 }
 
 impl Importer<io::BufReader<File>> {
@@ -101,12 +188,27 @@ impl<R: io::BufRead + Send> Importer<R> {
         Self {
             target_dir: PathBuf::from("storage"),
             read,
-            config: ImportConfig::default(),
+            country_boundaries: None,
+            maxspeed: HashMap::new(),
         }
     }
 
-    pub fn with_config(mut self, config: ImportConfig) -> Self {
-        self.config = config;
+    /// Set the output directory for the imported data files.
+    pub fn with_target_dir(mut self, dir: PathBuf) -> Self {
+        self.target_dir = dir;
+        self
+    }
+
+    /// Set the path to a GeoJSON file with country boundary polygons.
+    /// If not set, country lookup is skipped and `country_id` is left as unknown.
+    pub fn with_country_boundaries(mut self, path: PathBuf) -> Self {
+        self.country_boundaries = Some(path);
+        self
+    }
+
+    /// Set named maxspeed overrides (merged over built-in defaults).
+    pub fn with_maxspeed(mut self, overrides: HashMap<String, u8>) -> Self {
+        self.maxspeed = overrides;
         self
     }
 
@@ -134,7 +236,12 @@ impl<R: io::BufRead + Send> Importer<R> {
             }
         }
 
-        let maxspeed_map = self.config.maxspeed_map();
+        // Build merged maxspeed map: built-ins overridden by config values.
+        let maxspeed_map: HashMap<String, u8> = BUILTIN_MAXSPEED
+            .iter()
+            .map(|(k, v)| (k.to_string(), *v))
+            .chain(self.maxspeed.into_iter())
+            .collect();
 
         let mut nodes = TableFile::<Node>::open_override(self.target_dir.join("nodes.bin"))
             .map_err(Error::WriteError)?;
@@ -310,7 +417,7 @@ impl<R: io::BufRead + Send> Importer<R> {
         }
 
         // Build country lookup once (may be skipped if no boundaries file configured).
-        let country_lookup = match &self.config.import.country_boundaries {
+        let country_lookup = match &self.country_boundaries {
             Some(path) => {
                 tracing::info!("loading country boundaries from {:?}", path);
                 Some(CountryLookup::from_file(path).map_err(Box::new)?)
@@ -566,29 +673,21 @@ fn way_flags(tags: &tags::WayTags<'_>) -> WayFlags {
 }
 
 /// Derive `NodeFlags` from parsed node tags.
-///
-/// Barrier defaults are applied first, then `access` tag overrides clear or set
-/// per-mode restrictions (same logic as `way_flags`).
 fn derive_node_flags(tags: &tags::NodeTags<'_>) -> NodeFlags {
     use tags::{Barrier, Conditional as Cond, Mode, NodeHighway};
     let mut flags = NodeFlags::empty();
 
-    // Barrier default flags.
     if let Some(barrier) = tags.barrier {
         match barrier {
-            // Blocks motor + HGV; bicycles and pedestrians can still pass.
             Barrier::bollard => {
                 flags |= NodeFlags::NO_MOTOR | NodeFlags::NO_HGV;
             }
-            // Gate-type: blocks motor by default; bikes often pass.
             Barrier::gate => {
                 flags |= NodeFlags::NO_MOTOR | NodeFlags::NO_HGV;
             }
-            // Blocks motor + HGV + bicycle; only foot can pass.
             Barrier::kissing_gate => {
                 flags |= NodeFlags::NO_MOTOR | NodeFlags::NO_HGV | NodeFlags::NO_BICYCLE;
             }
-            // Blocks bicycle (and motorcycle); motor vehicles and pedestrians pass.
             Barrier::cycle_barrier => {
                 flags |= NodeFlags::NO_BICYCLE;
             }
@@ -596,7 +695,6 @@ fn derive_node_flags(tags: &tags::NodeTags<'_>) -> NodeFlags {
         }
     }
 
-    // Access tag overrides (same two-pass logic as way_flags).
     if let Cond::Simple(a) = &tags.access
         && a.is_excluded()
     {
@@ -646,7 +744,6 @@ fn derive_node_flags(tags: &tags::NodeTags<'_>) -> NodeFlags {
         }
     }
 
-    // Traffic signals.
     if tags
         .highway
         .is_some_and(|h| matches!(h, NodeHighway::traffic_signals))
@@ -654,7 +751,6 @@ fn derive_node_flags(tags: &tags::NodeTags<'_>) -> NodeFlags {
         flags |= NodeFlags::TRAFFIC_SIGNALS;
     }
 
-    // Toll booth.
     if tags.toll == Some(true) {
         flags |= NodeFlags::TOLL;
     }
@@ -662,8 +758,6 @@ fn derive_node_flags(tags: &tags::NodeTags<'_>) -> NodeFlags {
     flags
 }
 
-/// Parse a dimension value (height or width) from an OSM tag into decimetres.
-/// Handles bare numbers (metres), "m" suffix, and feet-inches format (skipped).
 fn parse_dim_m(v: &str) -> Option<f32> {
     let v = v.trim();
     if let Some(rest) = v.find('\'').map(|p| (v[..p].trim(), v[p + 1..].trim())) {
@@ -672,7 +766,7 @@ fn parse_dim_m(v: &str) -> Option<f32> {
             .1
             .strip_suffix('"')
             .unwrap_or(rest.1)
-            .trim()
+            .trim_end()
             .parse()
             .unwrap_or(0.0);
         return Some(feet * 0.3048 + inches * 0.0254);
@@ -681,14 +775,12 @@ fn parse_dim_m(v: &str) -> Option<f32> {
     v.parse::<f32>().ok()
 }
 
-/// Parse a weight value from an OSM tag into metric tonnes.
 fn parse_weight_t(v: &str) -> Option<f32> {
     let v = v.trim();
     let v = v.strip_suffix('t').unwrap_or(v).trim_end();
     v.parse::<f32>().ok()
 }
 
-/// Build a [`DimRestriction`] from `maxheight`, `maxwidth`, `maxweight` tags.
 fn dim_restriction_from_tags(tags: &tags::WayTags<'_>) -> DimRestriction {
     let height_dm = tags
         .raw_max_height
@@ -703,7 +795,7 @@ fn dim_restriction_from_tags(tags: &tags::WayTags<'_>) -> DimRestriction {
     let weight_250kg = tags
         .raw_max_weight
         .and_then(parse_weight_t)
-        .map(|t| (t * 4.0).round() as u8) // 1t = 4 units of 250kg
+        .map(|t| (t * 4.0).round() as u8)
         .unwrap_or(0);
     DimRestriction {
         max_height_dm: height_dm,
@@ -712,8 +804,6 @@ fn dim_restriction_from_tags(tags: &tags::WayTags<'_>) -> DimRestriction {
     }
 }
 
-/// Returns true if a oneway road allows bicycles in both directions
-/// (tagged `oneway:bicycle=no`).
 fn is_bicycle_contraflow(tags: &tags::WayTags<'_>) -> bool {
     use tags::{Conditional, Mode, OneWay};
     if let Conditional::Multi(items) = &tags.oneway {
@@ -725,8 +815,6 @@ fn is_bicycle_contraflow(tags: &tags::WayTags<'_>) -> bool {
     }
 }
 
-/// Derive a `SurfaceQuality` tier from the way's surface/smoothness/tracktype tags.
-/// Priority: smoothness > tracktype > surface (most specific first).
 fn surface_quality(tags: &tags::WayTags<'_>) -> SurfaceQuality {
     use tags::{Smoothness, Surface, TrackType};
 

@@ -30,8 +30,8 @@ pub struct ServiceOptions {
     pub storage_dir: PathBuf,
     /// Maximum locate search radius in metres.
     pub max_radius_m: f32,
-    /// Optional path to a TOML file with per-country, per-profile speed overrides.
-    pub speed_config_path: Option<std::path::PathBuf>,
+    /// Per-country, per-profile speed overrides.
+    pub speed_config: SpeedConfig,
 }
 
 impl Default for ServiceOptions {
@@ -39,7 +39,7 @@ impl Default for ServiceOptions {
         Self {
             storage_dir: PathBuf::from("storage"),
             max_radius_m: 1_000.0,
-            speed_config_path: None,
+            speed_config: SpeedConfig::default(),
         }
     }
 }
@@ -64,11 +64,7 @@ impl Service {
         nodes.header()?.verify()?;
         ways.header()?.verify()?;
 
-        let speed_config = match options.speed_config_path {
-            Some(ref path) => SpeedConfig::from_file(path)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?,
-            None => SpeedConfig::default(),
-        };
+        let speed_config = options.speed_config;
 
         let dim_table = DimRestrictionsTable::read_from_file(
             &options.storage_dir.join("dim_restrictions.bin"),

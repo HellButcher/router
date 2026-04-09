@@ -1,9 +1,10 @@
-use clap::Args;
 use std::path::PathBuf;
+
+use clap::Args;
 
 #[derive(Clone, Debug, Args)]
 pub struct RouteArgs {
-    /// Path to the storage directory
-    #[clap(long, default_value = "storage")]
-    pub storage_dir: PathBuf,
+    /// Storage directory (overrides config `storage.dir`)
+    #[clap(long)]
+    pub storage_dir: Option<PathBuf>,
 }

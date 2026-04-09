@@ -1,4 +1,5 @@
-use std::path::Path;
+#[cfg(feature = "serde")]
+use std::collections::HashMap;
 
 use router_storage::data::attrib::HighwayClass;
 use router_types::country::CountryId;
@@ -7,9 +8,18 @@ use crate::profile::VehicleType;
 
 const STRIDE: usize = VehicleType::COUNT * HighwayClass::COUNT;
 
-/// Per-country, per-profile default speeds for highway classes.
+// Private deserialization helper.
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize, Default)]
+struct SpeedConfigRaw {
+    #[serde(default)]
+    country_speed: HashMap<String, HashMap<String, HashMap<String, u8>>>,
+}
+
+/// Per-country, per-profile default speeds for highway classes (serve-time).
 ///
-/// Loaded from a TOML file at server startup. TOML structure:
+/// Deserializable (with the `serde` feature) — usable standalone or via
+/// `#[serde(flatten)]` in a parent config struct:
 ///
 /// ```toml
 /// [country_speed.DE.car]
@@ -20,80 +30,96 @@ const STRIDE: usize = VehicleType::COUNT * HighwayClass::COUNT;
 /// motorway = 80
 /// ```
 ///
-/// Keys under each profile table are highway-class names as used in OSM
-/// (`motorway`, `trunk`, `primary`, …). Missing entries fall back to the
-/// profile's built-in speed table.
-///
 /// Internally stored as a flat array indexed by
 /// `country_id * STRIDE + vehicle_type * HighwayClass::COUNT + highway_class`.
 /// A value of 0 means "no override".
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "SpeedConfigRaw"))]
 pub struct SpeedConfig {
     speeds: Box<[u8]>, // length = CountryId::COUNT * STRIDE
 }
 
-impl SpeedConfig {
-    fn new_speeds() -> Box<[u8]> {
-        vec![0u8; CountryId::COUNT * STRIDE].into_boxed_slice()
-    }
+#[cfg(feature = "serde")]
+impl TryFrom<SpeedConfigRaw> for SpeedConfig {
+    type Error = String;
 
-    /// Load from a TOML file.
-    pub fn from_file(path: &Path) -> Result<Self, ConfigError> {
-        let content =
-            std::fs::read_to_string(path).map_err(|e| ConfigError::Io(path.to_path_buf(), e))?;
-        let value: toml::Value = content
-            .parse()
-            .map_err(|e| ConfigError::Parse(path.to_path_buf(), e))?;
-        Self::from_toml(&value).map_err(|e| ConfigError::Schema(path.to_path_buf(), e))
-    }
+    fn try_from(raw: SpeedConfigRaw) -> Result<Self, String> {
+        struct Entry {
+            /// `None` = all countries, `Some(idx)` = specific country.
+            country: Option<usize>,
+            /// `None` = all profiles, `Some(idx)` = specific profile.
+            vehicle: Option<usize>,
+            highway: HighwayClass,
+            kmh: u8,
+        }
 
-    fn from_toml(value: &toml::Value) -> Result<Self, String> {
-        let mut speeds = Self::new_speeds();
+        let mut entries: Vec<Entry> = Vec::new();
 
-        let Some(country_speed) = value.get("country_speed").and_then(|v| v.as_table()) else {
-            return Ok(SpeedConfig { speeds });
-        };
+        for (country_pat, profiles) in &raw.country_speed {
+            let country = if country_pat == "*" {
+                None
+            } else {
+                let id = CountryId::from_iso2(&country_pat.to_uppercase());
+                if id.is_unknown() {
+                    return Err(format!("unknown country code: {country_pat}"));
+                }
+                Some(id.0 as usize)
+            };
 
-        for (country_iso, profiles) in country_speed {
-            let country_id = CountryId::from_iso2(&country_iso.to_uppercase());
-            if country_id.is_unknown() {
-                return Err(format!("unknown country code: {country_iso}"));
-            }
+            for (profile_pat, highway_speeds) in profiles {
+                let vehicle = if profile_pat == "*" {
+                    None
+                } else {
+                    let vt = VehicleType::from_name(profile_pat.to_lowercase().as_str())
+                        .ok_or_else(|| format!("unknown profile: {profile_pat}"))?;
+                    Some(vt as usize)
+                };
 
-            let profiles = profiles
-                .as_table()
-                .ok_or_else(|| format!("country_speed.{country_iso} must be a table"))?;
-
-            for (profile_name, highway_speeds) in profiles {
-                let vehicle_type = VehicleType::from_name(profile_name.to_lowercase().as_str())
-                    .ok_or_else(|| format!("unknown profile: {profile_name}"))?;
-
-                let highway_speeds = highway_speeds.as_table().ok_or_else(|| {
-                    format!("country_speed.{country_iso}.{profile_name} must be a table")
-                })?;
-
-                for (highway_name, v) in highway_speeds {
+                for (highway_name, &kmh) in highway_speeds {
                     let highway = HighwayClass::from_name(highway_name)
                         .ok_or_else(|| format!("unknown highway class: {highway_name}"))?;
-                    let kmh = v
-                        .as_integer()
-                        .ok_or_else(|| format!("{highway_name} must be an integer"))?;
-                    let kmh = u8::try_from(kmh)
-                        .map_err(|_| format!("{highway_name} = {kmh} does not fit in u8"))?;
+                    entries.push(Entry {
+                        country,
+                        vehicle,
+                        highway,
+                        kmh,
+                    });
+                }
+            }
+        }
 
-                    let idx = country_id.0 as usize * STRIDE
-                        + vehicle_type as usize * HighwayClass::COUNT
-                        + highway as usize;
-                    speeds[idx] = kmh;
+        // Apply least-specific first (None < Some) so specific entries overwrite wildcards.
+        entries.sort_unstable_by_key(|e| (e.country.is_some(), e.vehicle.is_some()));
+
+        let all_countries: Vec<usize> = (1..CountryId::COUNT).collect();
+        let all_vehicles: Vec<usize> = (0..VehicleType::COUNT).collect();
+
+        let mut speeds = vec![0u8; CountryId::COUNT * STRIDE].into_boxed_slice();
+        for e in entries {
+            let countries: &[usize] = match e.country {
+                None => &all_countries,
+                Some(ref c) => std::slice::from_ref(c),
+            };
+            let vehicles: &[usize] = match e.vehicle {
+                None => &all_vehicles,
+                Some(ref v) => std::slice::from_ref(v),
+            };
+            for &c in countries {
+                for &v in vehicles {
+                    speeds[c * STRIDE + v * HighwayClass::COUNT + e.highway as usize] = e.kmh;
                 }
             }
         }
 
         Ok(SpeedConfig { speeds })
     }
+}
 
-    /// Look up the default speed for a given country, vehicle type, and highway class.
-    /// Returns `None` if no country-specific override is configured — caller
-    /// should fall back to the profile's built-in speed table.
+impl SpeedConfig {
+    /// Look up the serve-time speed for a given country, vehicle type, and highway class.
+    /// Returns `None` if no override is configured — caller should fall back to
+    /// the profile's built-in speed table.
     #[inline]
     pub fn default_speed(
         &self,
@@ -112,17 +138,7 @@ impl SpeedConfig {
 impl Default for SpeedConfig {
     fn default() -> Self {
         SpeedConfig {
-            speeds: Self::new_speeds(),
+            speeds: vec![0u8; CountryId::COUNT * STRIDE].into_boxed_slice(),
         }
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ConfigError {
-    #[error("failed to read speed config {0}: {1}")]
-    Io(std::path::PathBuf, std::io::Error),
-    #[error("failed to parse speed config {0}: {1}")]
-    Parse(std::path::PathBuf, toml::de::Error),
-    #[error("invalid speed config structure in {0}: {1}")]
-    Schema(std::path::PathBuf, String),
 }

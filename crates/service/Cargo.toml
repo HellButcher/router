@@ -14,7 +14,6 @@ schemars = ["dep:schemars", "router-types/schemars"]
 tracing.workspace = true
 thiserror.workspace = true
 rayon.workspace = true
-toml = "0.8"
 
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
