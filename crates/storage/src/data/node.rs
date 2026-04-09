@@ -8,7 +8,7 @@ use crate::{
     tablefile::TableData,
 };
 
-use super::SimpleHeader;
+use super::{SimpleHeader, attrib::NodeFlags};
 
 pub const NO_WAY: u64 = u64::MAX;
 
@@ -23,6 +23,9 @@ pub struct Node {
     pub pos: LatLon,
     pub(crate) first_way: AtomicU64,
     pub(crate) first_way_reverse: AtomicU64,
+    /// Access restrictions and routing hints derived from OSM node tags.
+    pub flags: NodeFlags,
+    _pad: [u8; 7],
 }
 
 impl Default for Node {
@@ -39,6 +42,8 @@ impl Node {
             pos,
             first_way: AtomicU64::new(NO_WAY),
             first_way_reverse: AtomicU64::new(NO_WAY),
+            flags: NodeFlags::empty(),
+            _pad: [0; 7],
         }
     }
 
@@ -81,5 +86,5 @@ impl TableData for Node {
 
 impl Versioned for Node {
     // The version number should be incremented whenever the in-memory representation of `Way` changes in a non-compatible way, such that old data files can no longer be read correctly.
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
 }

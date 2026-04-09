@@ -74,6 +74,14 @@ pub struct RouteRequest {
     #[cfg_attr(feature = "serde", serde(default))]
     pub algorithm: Algorithm,
 
+    /// When `true`, routes avoid all toll roads and toll booths entirely.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub avoid_toll: bool,
+
+    /// When `true`, routes avoid ferry connections entirely.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub avoid_ferry: bool,
+
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -249,6 +257,9 @@ impl Service {
                 cost_model: SpeedMap {
                     profile,
                     speed_config: &self.speed_config,
+                    dim_table: &self.dim_table,
+                    avoid_toll: request.avoid_toll,
+                    avoid_ferry: request.avoid_ferry,
                 },
                 goal_pos: goal_snap.pos(),
             };

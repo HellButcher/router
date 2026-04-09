@@ -15,11 +15,40 @@ bitflags! {
         const NO_BICYCLE     = 0b0001_0000;
         /// Pedestrians not allowed.
         const NO_FOOT        = 0b0010_0000;
+        /// Toll road — passing this way incurs a toll charge.
+        const TOLL           = 0b0000_0010;
+        /// Way passes through a tunnel.
+        const TUNNEL         = 0b0100_0000;
+        /// Way is on a bridge.
+        const BRIDGE         = 0b1000_0000;
     }
 }
 
 unsafe impl bytemuck::Zeroable for WayFlags {}
 unsafe impl bytemuck::Pod for WayFlags {}
+
+bitflags! {
+    /// Access restrictions and routing hints encoded per-node.
+    #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+    #[repr(transparent)]
+    pub struct NodeFlags: u8 {
+        /// Motor vehicles cannot pass this node (barrier).
+        const NO_MOTOR        = 0b0000_0001;
+        /// HGV cannot pass this node.
+        const NO_HGV          = 0b0000_0010;
+        /// Bicycles cannot pass this node (barrier).
+        const NO_BICYCLE      = 0b0000_0100;
+        /// Pedestrians cannot pass this node.
+        const NO_FOOT         = 0b0000_1000;
+        /// Node has traffic signals — routing may add an intersection penalty.
+        const TRAFFIC_SIGNALS = 0b0001_0000;
+        /// Toll booth at this node.
+        const TOLL            = 0b0010_0000;
+    }
+}
+
+unsafe impl bytemuck::Zeroable for NodeFlags {}
+unsafe impl bytemuck::Pod for NodeFlags {}
 
 /// Highway class used for default speed lookups.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -48,6 +77,7 @@ pub enum HighwayClass {
     Cycleway = 19,
     Path = 20,
     Bridleway = 21,
+    Ferry = 22,
 }
 
 unsafe impl bytemuck::Zeroable for HighwayClass {}
@@ -55,7 +85,7 @@ unsafe impl bytemuck::Pod for HighwayClass {}
 
 impl HighwayClass {
     /// Number of `HighwayClass` variants.
-    pub const COUNT: usize = 22;
+    pub const COUNT: usize = 23;
 
     pub fn name(self) -> &'static str {
         match self {
@@ -81,6 +111,7 @@ impl HighwayClass {
             Self::Cycleway => "cycleway",
             Self::Path => "path",
             Self::Bridleway => "bridleway",
+            Self::Ferry => "ferry",
         }
     }
 
@@ -108,6 +139,7 @@ impl HighwayClass {
             "cycleway" => Some(Self::Cycleway),
             "path" => Some(Self::Path),
             "bridleway" => Some(Self::Bridleway),
+            "ferry" => Some(Self::Ferry),
             _ => None,
         }
     }

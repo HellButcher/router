@@ -150,6 +150,16 @@ export interface components {
     };
     /** @description A geographic coordinate in latitude (lat) and longitude (lon) in degrees. */
     IsochroneRequest: {
+      /**
+       * @description When `true`, routes avoid ferry connections entirely.
+       * @default false
+       */
+      avoid_ferry?: boolean;
+      /**
+       * @description When `true`, routes avoid all toll roads and toll booths entirely.
+       * @default false
+       */
+      avoid_toll?: boolean;
       /** Format: float */
       lat: number;
       /** Format: float */
@@ -280,6 +290,16 @@ export interface components {
         };
     MatrixRequest:
       | {
+          /**
+           * @description When `true`, routes avoid ferry connections entirely.
+           * @default false
+           */
+          avoid_ferry?: boolean;
+          /**
+           * @description When `true`, routes avoid all toll roads and toll booths entirely.
+           * @default false
+           */
+          avoid_toll?: boolean;
           id?: string | null;
           pairs?: [number, number][];
           profile?: string | null;
@@ -321,6 +341,12 @@ export interface components {
       lat: number;
       /** Format: float */
       lon: number;
+      no_bicycle?: boolean;
+      no_foot?: boolean;
+      no_hgv?: boolean;
+      no_motor?: boolean;
+      toll?: boolean;
+      traffic_signals?: boolean;
     };
     /** @description A list of Points */
     Points: number[][] | string;
@@ -336,6 +362,16 @@ export interface components {
        * @default bidir_a_star
        */
       algorithm?: components["schemas"]["Algorithm"];
+      /**
+       * @description When `true`, routes avoid ferry connections entirely.
+       * @default false
+       */
+      avoid_ferry?: boolean;
+      /**
+       * @description When `true`, routes avoid all toll roads and toll booths entirely.
+       * @default false
+       */
+      avoid_toll?: boolean;
       id?: string | null;
       locations: components["schemas"]["Locations"];
       /** @default null */
@@ -372,6 +408,7 @@ export interface components {
      */
     Unit: "km" | "mi";
     WayMeta: {
+      bridge?: boolean;
       /** @description ISO 3166-1 alpha-2 country code, or `null` if unknown. */
       country_id?: string | null;
       /**
@@ -379,6 +416,7 @@ export interface components {
        * @description Haversine distance between the two endpoint nodes in metres.
        */
       dist_m: number;
+      ferry?: boolean;
       from_node: components["schemas"]["NodeMeta"];
       /** @description Highway classification (e.g. `"Residential"`, `"Primary"`). */
       highway: string;
@@ -389,17 +427,34 @@ export interface components {
       id: number;
       /**
        * Format: uint8
+       * @description Max height in decimetres (0.1 m); 0 = no restriction.
+       */
+      max_height_dm?: number;
+      /**
+       * Format: uint8
        * @description Explicit max speed in km/h; 0 means use highway-class default.
        */
-      max_speed: number;
-      no_bicycle: boolean;
-      no_foot: boolean;
-      no_hgv: boolean;
-      no_motor: boolean;
-      oneway: boolean;
+      max_speed?: number;
+      /**
+       * Format: uint8
+       * @description Max weight in units of 250 kg; 0 = no restriction.
+       */
+      max_weight_250kg?: number;
+      /**
+       * Format: uint8
+       * @description Max width in decimetres (0.1 m); 0 = no restriction.
+       */
+      max_width_dm?: number;
+      no_bicycle?: boolean;
+      no_foot?: boolean;
+      no_hgv?: boolean;
+      no_motor?: boolean;
+      oneway?: boolean;
       /** @description Surface quality tier (e.g. `"Excellent"`, `"Good"`, `"Bad"`). */
       surface_quality: string;
       to_node: components["schemas"]["NodeMeta"];
+      toll?: boolean;
+      tunnel?: boolean;
     };
   };
   responses: never;

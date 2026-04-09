@@ -194,6 +194,60 @@ body {
     }
   }
 
+  /* ── Route options (avoid-toll, avoid-ferry checkboxes) ── */
+  .route-options {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .route-option-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.82em;
+    color: var(--text-color);
+    cursor: pointer;
+    padding: 3px 0;
+
+    &:hover input[type="checkbox"] {
+      border-color: var(--accent);
+    }
+  }
+
+  input[type="checkbox"] {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 15px;
+    height: 15px;
+    border-radius: 3px;
+    border: 1.5px solid rgba(0, 0, 0, 0.25);
+    background: rgba(255, 255, 255, 0.8);
+    cursor: pointer;
+    transition:
+      background 0.12s,
+      border-color 0.12s;
+
+    &:checked {
+      background: var(--accent);
+      border-color: var(--accent);
+      /* SVG checkmark */
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpolyline points='1.5,5 4,7.5 8.5,2.5' fill='none' stroke='white' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-size: 10px 10px;
+      background-repeat: no-repeat;
+      background-position: center;
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+  }
+
   /* ── Route actions ── */
   .route-actions {
     display: flex;

@@ -132,7 +132,7 @@ impl Service {
                         if request.with_meta
                             && let Ok(way) = self.ways.get(snap.way_idx)
                         {
-                            loc.way_meta = WayMeta::from(&way, &self.nodes).ok();
+                            loc.way_meta = WayMeta::from(&way, &self.nodes, &self.dim_table).ok();
                         }
                     }
                 }

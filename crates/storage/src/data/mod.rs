@@ -8,6 +8,7 @@ use self::{
 };
 
 pub mod attrib;
+pub mod dim_restriction;
 pub mod node;
 pub mod way;
 

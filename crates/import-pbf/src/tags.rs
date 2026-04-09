@@ -230,6 +230,26 @@ define_tag_enum! {
 }
 
 define_tag_enum! {
+    pub enum Barrier {
+        /// Blocks motor vehicles and HGV; bicycles and pedestrians can still pass.
+        bollard | block | chain | jersey_barrier | log | planter | rope | spikes,
+        /// Gate-type barrier: blocks motor vehicles by default; bikes often pass.
+        gate | lift_gate | swing_gate | sliding_gate | hampshire_gate | bump_gate | wicket_gate,
+        /// Blocks motor, HGV, and bicycle; only foot can pass.
+        kissing_gate | stile | turnstile | full_height_turnstile | sump_buster,
+        /// Blocks bicycles (and motorcycles) only.
+        cycle_barrier | motorcycle_barrier,
+    }
+}
+
+define_tag_enum! {
+    pub enum NodeHighway {
+        traffic_signals,
+        crossing | stop | give_way | mini_roundabout | turning_circle | turning_loop,
+    }
+}
+
+define_tag_enum! {
     #[derive(Default)]
     pub enum Mode {
         #[default]
@@ -384,6 +404,14 @@ pub struct WayTags<'s> {
     /// Raw value of the `maxspeed` tag, unparsed. Use [`parse_max_speed`] with a
     /// named-value map to resolve this to km/h.
     pub raw_max_speed: Option<&'s str>,
+    pub raw_max_speed_forward: Option<&'s str>,
+    pub raw_max_speed_backward: Option<&'s str>,
+    pub tunnel: bool,
+    pub bridge: bool,
+    pub ferry: bool,
+    pub raw_max_height: Option<&'s str>,
+    pub raw_max_width: Option<&'s str>,
+    pub raw_max_weight: Option<&'s str>,
 }
 
 /*
@@ -408,6 +436,14 @@ impl<'s> WayTags<'s> {
             "disused" => self.disused = FromTag::from_tag(v),
             "abandoned" => self.abandoned = FromTag::from_tag(v),
             "maxspeed" => self.raw_max_speed = Some(v),
+            "maxspeed:forward" => self.raw_max_speed_forward = Some(v),
+            "maxspeed:backward" => self.raw_max_speed_backward = Some(v),
+            "tunnel" => self.tunnel = !matches!(v, "no" | "false"),
+            "bridge" => self.bridge = !matches!(v, "no" | "false"),
+            "route" => self.ferry = v == "ferry",
+            "maxheight" => self.raw_max_height = Some(v),
+            "maxwidth" => self.raw_max_width = Some(v),
+            "maxweight" => self.raw_max_weight = Some(v),
             _ => {
                 let mut k2 = k;
                 if let Some(p) = k2.find(':') {
@@ -503,7 +539,7 @@ impl<'s> WayTags<'s> {
     }
     */
     pub fn is_excluded(&self) -> bool {
-        self.highway.is_none_or(|h| h.is_excluded())
+        (!self.ferry && self.highway.is_none_or(|h| h.is_excluded()))
             || self.access.is_excluded()
             || self.disused
             || self.abandoned
@@ -542,6 +578,42 @@ pub fn parse_max_speed(v: &str, named: &std::collections::HashMap<String, u8>) -
     }
     let kmh = v.parse::<u16>().ok()?;
     Some(kmh.min(255) as u8)
+}
+
+#[derive(Default)]
+pub struct NodeTags<'s> {
+    pub barrier: Option<Barrier>,
+    pub access: Conditional<'s, Access>,
+    pub highway: Option<NodeHighway>,
+    pub toll: Option<bool>,
+}
+
+impl<'s> NodeTags<'s> {
+    pub fn set_tag(&mut self, k: &str, v: &'s str) -> bool {
+        match k {
+            "barrier" => self.barrier = FromTag::from_tag(v),
+            "highway" => self.highway = FromTag::from_tag(v),
+            "toll" => self.toll = FromTag::from_tag(v),
+            _ => {
+                let k2 = k.split(':').next().unwrap_or(k);
+                match k2 {
+                    "access" => self.access.set_tag(k, v),
+                    _ if !matches!(Mode::from_tag(k2), Mode::default | Mode::unknown) => {
+                        self.access.set_tag(k, v)
+                    }
+                    _ => return false,
+                }
+            }
+        }
+        true
+    }
+
+    pub fn has_routing_data(&self) -> bool {
+        self.barrier.is_some()
+            || !self.access.is_none()
+            || self.highway.is_some()
+            || self.toll.is_some()
+    }
 }
 
 impl Conditional<'_, Access> {

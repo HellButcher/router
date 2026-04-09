@@ -1,7 +1,8 @@
 use router_algorithm::{Edge, Graph};
 use router_storage::{
     data::{
-        attrib::{HighwayClass, WayFlags},
+        attrib::{HighwayClass, NodeFlags, WayFlags},
+        dim_restriction::DimRestrictionsTable,
         node::{NO_WAY, Node},
         way::Way,
         way_index_from_ptr,
@@ -23,7 +24,14 @@ use crate::{
 /// Implementations must ensure that `heuristic` never overestimates the true
 /// edge cost so that A* remains correct and optimal.
 pub trait CostModel: Send + Sync {
+    /// Traversal cost for `way`. Returns `None` if the way is blocked for this vehicle.
     fn edge_cost(&self, way: &Way) -> Option<usize>;
+
+    /// Additional cost for arriving at `node` (e.g. traffic signal delay, toll
+    /// booth). Returns `None` if the node physically blocks the vehicle (barrier).
+    /// Returns `Some(0)` if the node is freely passable with no extra penalty.
+    fn node_cost(&self, node: &Node) -> Option<usize>;
+
     fn heuristic(&self, from: LatLon, to: LatLon) -> usize;
 }
 
@@ -40,6 +48,14 @@ impl CostModel for DistanceCost {
             return None;
         }
         Some(way.dist_m as usize)
+    }
+
+    fn node_cost(&self, node: &Node) -> Option<usize> {
+        if node_is_blocked(node, self.vehicle_type) {
+            None
+        } else {
+            Some(0)
+        }
     }
 
     fn heuristic(&self, from: LatLon, to: LatLon) -> usize {
@@ -61,6 +77,14 @@ impl CostModel for DistanceCost {
 pub struct SpeedMap<'p> {
     pub profile: &'p Profile,
     pub speed_config: &'p SpeedConfig,
+    /// Dimension-restriction lookup table.
+    pub dim_table: &'p DimRestrictionsTable,
+    /// When `true`, any way or node with the TOLL flag is treated as impassable
+    /// rather than adding `profile.toll_penalty_ms`.
+    pub avoid_toll: bool,
+    /// When `true`, ferry routes (`HighwayClass::Ferry`) are treated as impassable
+    /// rather than adding `profile.ferry_penalty_ms`.
+    pub avoid_ferry: bool,
 }
 
 impl SpeedMap<'_> {
@@ -97,14 +121,59 @@ impl SpeedMap<'_> {
         if way_is_blocked(way, self.profile.vehicle_type) {
             return None;
         }
+        // Check dimension restrictions.
+        {
+            let dim = self.profile.vehicle_dim;
+            let restriction = self.dim_table.get(way.dim_restriction_idx);
+            if restriction.blocks_vehicle(dim.height_dm, dim.width_dm, dim.weight_250kg) {
+                return None;
+            }
+        }
+        // Toll handling: hard block or soft penalty.
+        let toll_ms = if way.flags.contains(WayFlags::TOLL) {
+            if self.avoid_toll {
+                return None;
+            }
+            self.profile.toll_penalty_ms as usize
+        } else {
+            0
+        };
+        // Ferry handling: hard block or boarding penalty.
+        let ferry_ms = if way.highway == HighwayClass::Ferry {
+            if self.avoid_ferry {
+                return None;
+            }
+            self.profile.ferry_penalty_ms as usize
+        } else {
+            0
+        };
         let speed = self.effective_speed(way)?;
-        Some((way.dist_m as f32 * 3600.0 / speed as f32) as usize)
+        Some((way.dist_m as f32 * 3600.0 / speed as f32) as usize + toll_ms + ferry_ms)
     }
 }
 
 impl CostModel for SpeedMap<'_> {
     fn edge_cost(&self, way: &Way) -> Option<usize> {
         self.way_cost_ms(way)
+    }
+
+    fn node_cost(&self, node: &Node) -> Option<usize> {
+        if node_is_blocked(node, self.profile.vehicle_type) {
+            return None;
+        }
+        let mut penalty = if node.flags.contains(NodeFlags::TRAFFIC_SIGNALS) {
+            self.profile.traffic_signal_penalty_ms as usize
+        } else {
+            0
+        };
+        // Node-level toll booths: hard block or soft penalty.
+        if node.flags.contains(NodeFlags::TOLL) {
+            if self.avoid_toll {
+                return None;
+            }
+            penalty += self.profile.toll_penalty_ms as usize;
+        }
+        Some(penalty)
     }
 
     fn heuristic(&self, from: LatLon, to: LatLon) -> usize {
@@ -211,12 +280,21 @@ impl<C: CostModel> Iterator for WayIter<'_, C> {
                 way_to_idx
             };
 
-            if let Some(cost) = self.graph.cost_model.edge_cost(&way) {
-                return Some(Edge {
-                    node: neighbour_idx,
-                    cost,
-                });
-            }
+            let Some(way_cost) = self.graph.cost_model.edge_cost(&way) else {
+                continue;
+            };
+            let neighbour_ref = self.graph.nodes.get(neighbour_idx).ok();
+            let node_penalty = match neighbour_ref.as_deref() {
+                Some(n) => match self.graph.cost_model.node_cost(n) {
+                    Some(p) => p,
+                    None => continue, // node blocks the vehicle
+                },
+                None => 0,
+            };
+            return Some(Edge {
+                node: neighbour_idx,
+                cost: way_cost + node_penalty,
+            });
         }
     }
 }
@@ -231,6 +309,17 @@ pub(crate) fn way_is_blocked(way: &Way, vehicle: VehicleType) -> bool {
         }
         VehicleType::Bicycle => way.flags.contains(WayFlags::NO_BICYCLE),
         VehicleType::Foot => way.flags.contains(WayFlags::NO_FOOT),
+    }
+}
+
+pub(crate) fn node_is_blocked(node: &Node, vehicle: VehicleType) -> bool {
+    match vehicle {
+        VehicleType::Car => node.flags.contains(NodeFlags::NO_MOTOR),
+        VehicleType::Hgv => {
+            node.flags.contains(NodeFlags::NO_MOTOR) || node.flags.contains(NodeFlags::NO_HGV)
+        }
+        VehicleType::Bicycle => node.flags.contains(NodeFlags::NO_BICYCLE),
+        VehicleType::Foot => node.flags.contains(NodeFlags::NO_FOOT),
     }
 }
 

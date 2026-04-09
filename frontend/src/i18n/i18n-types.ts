@@ -71,6 +71,14 @@ type RootTranslation = {
 		 * C​a​l​c​u​l​a​t​e​ ​r​o​u​t​e
 		 */
 		controlTitle: string
+		/**
+		 * A​v​o​i​d​ ​t​o​l​l​s
+		 */
+		avoidToll: string
+		/**
+		 * A​v​o​i​d​ ​f​e​r​r​i​e​s
+		 */
+		avoidFerry: string
 	}
 	locate: {
 		control: {
@@ -155,6 +163,34 @@ type RootTranslation = {
 			 */
 			flags: string
 			/**
+			 * N​o​d​e​ ​f​l​a​g​s
+			 */
+			nodeFlags: string
+			/**
+			 * M​a​x​ ​h​e​i​g​h​t
+			 */
+			maxHeight: string
+			/**
+			 * M​a​x​ ​w​i​d​t​h
+			 */
+			maxWidth: string
+			/**
+			 * M​a​x​ ​w​e​i​g​h​t
+			 */
+			maxWeight: string
+			/**
+			 * {​v​a​l​}​ ​d​m​ ​(​{​m​}​ ​m​)
+			 * @param {number} m
+			 * @param {number} val
+			 */
+			dmValue: RequiredParams<'m' | 'val'>
+			/**
+			 * {​v​a​l​}​ ​×​ ​2​5​0​ ​k​g​ ​(​{​t​}​ ​t​)
+			 * @param {number} t
+			 * @param {number} val
+			 */
+			weight250kgValue: RequiredParams<'t' | 'val'>
+			/**
 			 * F​r​o​m​ ​n​o​d​e
 			 */
 			fromNode: string
@@ -167,7 +203,7 @@ type RootTranslation = {
 			 */
 			position: string
 		}
-		flags: {
+		wayFlags: {
 			/**
 			 * o​n​e​w​a​y
 			 */
@@ -188,6 +224,48 @@ type RootTranslation = {
 			 * n​o​ ​H​G​V
 			 */
 			noHgv: string
+			/**
+			 * t​o​l​l
+			 */
+			toll: string
+			/**
+			 * t​u​n​n​e​l
+			 */
+			tunnel: string
+			/**
+			 * b​r​i​d​g​e
+			 */
+			bridge: string
+			/**
+			 * f​e​r​r​y
+			 */
+			ferry: string
+		}
+		nodeFlags: {
+			/**
+			 * n​o​ ​m​o​t​o​r
+			 */
+			noMotor: string
+			/**
+			 * n​o​ ​b​i​c​y​c​l​e
+			 */
+			noBicycle: string
+			/**
+			 * n​o​ ​f​o​o​t
+			 */
+			noFoot: string
+			/**
+			 * n​o​ ​H​G​V
+			 */
+			noHgv: string
+			/**
+			 * t​r​a​f​f​i​c​ ​s​i​g​n​a​l​s
+			 */
+			trafficSignals: string
+			/**
+			 * t​o​l​l
+			 */
+			toll: string
 		}
 	}
 	isochrone: {
@@ -300,6 +378,14 @@ export type TranslationFunctions = {
 		 * Calculate route
 		 */
 		controlTitle: () => LocalizedString
+		/**
+		 * Avoid tolls
+		 */
+		avoidToll: () => LocalizedString
+		/**
+		 * Avoid ferries
+		 */
+		avoidFerry: () => LocalizedString
 	}
 	locate: {
 		control: {
@@ -382,6 +468,30 @@ export type TranslationFunctions = {
 			 */
 			flags: () => LocalizedString
 			/**
+			 * Node flags
+			 */
+			nodeFlags: () => LocalizedString
+			/**
+			 * Max height
+			 */
+			maxHeight: () => LocalizedString
+			/**
+			 * Max width
+			 */
+			maxWidth: () => LocalizedString
+			/**
+			 * Max weight
+			 */
+			maxWeight: () => LocalizedString
+			/**
+			 * {val} dm ({m} m)
+			 */
+			dmValue: (arg: { m: number, val: number }) => LocalizedString
+			/**
+			 * {val} × 250 kg ({t} t)
+			 */
+			weight250kgValue: (arg: { t: number, val: number }) => LocalizedString
+			/**
 			 * From node
 			 */
 			fromNode: () => LocalizedString
@@ -394,7 +504,7 @@ export type TranslationFunctions = {
 			 */
 			position: () => LocalizedString
 		}
-		flags: {
+		wayFlags: {
 			/**
 			 * oneway
 			 */
@@ -415,6 +525,48 @@ export type TranslationFunctions = {
 			 * no HGV
 			 */
 			noHgv: () => LocalizedString
+			/**
+			 * toll
+			 */
+			toll: () => LocalizedString
+			/**
+			 * tunnel
+			 */
+			tunnel: () => LocalizedString
+			/**
+			 * bridge
+			 */
+			bridge: () => LocalizedString
+			/**
+			 * ferry
+			 */
+			ferry: () => LocalizedString
+		}
+		nodeFlags: {
+			/**
+			 * no motor
+			 */
+			noMotor: () => LocalizedString
+			/**
+			 * no bicycle
+			 */
+			noBicycle: () => LocalizedString
+			/**
+			 * no foot
+			 */
+			noFoot: () => LocalizedString
+			/**
+			 * no HGV
+			 */
+			noHgv: () => LocalizedString
+			/**
+			 * traffic signals
+			 */
+			trafficSignals: () => LocalizedString
+			/**
+			 * toll
+			 */
+			toll: () => LocalizedString
 		}
 	}
 	isochrone: {

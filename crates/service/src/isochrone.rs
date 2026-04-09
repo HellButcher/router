@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use router_algorithm::convex_hull::convex_hull;
 use router_algorithm::dikstra::dijkstra_within_budget;
+use router_storage::data::dim_restriction::DimRestrictionsTable;
 use router_storage::data::node::Node;
 use router_storage::data::way::Way;
 use router_storage::tablefile::TableFile;
@@ -50,6 +51,14 @@ pub struct IsochroneRequest {
     pub unit: IsochroneUnit,
     /// Threshold values in the chosen unit. Need not be sorted.
     pub ranges: Vec<f64>,
+
+    /// When `true`, routes avoid all toll roads and toll booths entirely.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub avoid_toll: bool,
+
+    /// When `true`, routes avoid ferry connections entirely.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub avoid_ferry: bool,
 }
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -122,6 +131,9 @@ impl Service {
             &self.ways,
             profile,
             &self.speed_config,
+            &self.dim_table,
+            request.avoid_toll,
+            request.avoid_ferry,
             request.unit,
         );
 
@@ -178,6 +190,9 @@ fn run_isochrone(
     ways: &TableFile<Way>,
     profile: &Profile,
     speed_config: &crate::speed_config::SpeedConfig,
+    dim_table: &DimRestrictionsTable,
+    avoid_toll: bool,
+    avoid_ferry: bool,
     unit: IsochroneUnit,
 ) -> HashMap<usize, usize> {
     match unit {
@@ -200,6 +215,9 @@ fn run_isochrone(
                 cost_model: SpeedMap {
                     profile,
                     speed_config,
+                    dim_table,
+                    avoid_toll,
+                    avoid_ferry,
                 },
                 goal_pos: origin_snap.pos(),
             };

@@ -57,7 +57,7 @@ impl Service {
             (None, Some(id)) => {
                 let result = self.ways.find(&WayId(id))?;
                 let way = result
-                    .map(|(_, w)| WayMeta::from(&w, &self.nodes))
+                    .map(|(_, w)| WayMeta::from(&w, &self.nodes, &self.dim_table))
                     .ok_or_else(|| Error::InvalidRequest(format!("way {id} not found")))?
                     .map_err(Error::StorageError)?;
                 Ok(InspectResponse {

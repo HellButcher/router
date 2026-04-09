@@ -47,6 +47,14 @@ pub struct MatrixRequest {
     )]
     pub pairs: Vec<(usize, usize)>,
 
+    /// When `true`, routes avoid all toll roads and toll booths entirely.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub avoid_toll: bool,
+
+    /// When `true`, routes avoid ferry connections entirely.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub avoid_ferry: bool,
+
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
@@ -166,6 +174,9 @@ impl Service {
         let speed_map = SpeedMap {
             profile,
             speed_config: &self.speed_config,
+            dim_table: &self.dim_table,
+            avoid_toll: request.avoid_toll,
+            avoid_ferry: request.avoid_ferry,
         };
         let routed: Vec<(usize, MatrixResponseEntry)> = by_origin
             .into_par_iter()

@@ -9,7 +9,8 @@ use rayon::iter::{
 };
 use router_storage::{
     data::{
-        attrib::{HighwayClass, SurfaceQuality, WayFlags},
+        attrib::{HighwayClass, NodeFlags, SurfaceQuality, WayFlags},
+        dim_restriction::{DimRestriction, DimRestrictionsTable},
         link_nodes_and_ways,
         node::{Node, NodeId},
         way::{Way, WayId},
@@ -23,10 +24,15 @@ use std::{
     fs::File,
     io::{self, BufReader},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 use thiserror::Error;
 
-use crate::{config::ImportConfig, country_lookup::CountryLookup, tags::WayTags};
+use crate::{
+    config::ImportConfig,
+    country_lookup::CountryLookup,
+    tags::{NodeTags, WayTags},
+};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -138,13 +144,18 @@ impl<R: io::BufRead + Send> Importer<R> {
         let mut nodes_append = nodes.appender().map_err(Error::WriteError)?.spawn();
         let mut ways_append = ways.appender().map_err(Error::WriteError)?.spawn();
 
+        let dim_table: Arc<Mutex<DimRestrictionsTable>> =
+            Arc::new(Mutex::new(DimRestrictionsTable::default()));
+
         let _span = tracing::info_span!("import").entered();
         let _span = tracing::info_span!("parse_blobs").entered();
+        let dim_table_clone = Arc::clone(&dim_table);
         blobs
             .into_iter()
             .map(|b| (nodes_append.start(), ways_append.start(), b))
             .par_bridge()
             .try_for_each(|(nodes_appender, ways_appender, blob)| -> Result<()> {
+                let dim_table = &dim_table_clone;
                 let data = blob?.into_decoded()?;
                 let mut nodes = Vec::new();
                 let mut ways = Vec::new();
@@ -155,14 +166,26 @@ impl<R: io::BufRead + Send> Importer<R> {
                         assert!(id.0 > old_id);
                         old_id = id.0;
                         let pos = LatLon(n.lat_deg() as f32, n.lon_deg() as f32);
-                        nodes.push(Node::new(id, pos));
+                        let mut node_tags = NodeTags::default();
+                        n.tags().iter().for_each(|(k, v)| {
+                            node_tags.set_tag(k, v);
+                        });
+                        let mut node = Node::new(id, pos);
+                        node.flags = derive_node_flags(&node_tags);
+                        nodes.push(node);
                     }
                     for n in group.iter_dense_nodes() {
                         let id = NodeId(n.id());
                         assert!(id.0 > old_id);
                         old_id = id.0;
                         let pos = LatLon(n.lat_deg() as f32, n.lon_deg() as f32);
-                        nodes.push(Node::new(id, pos));
+                        let mut node_tags = NodeTags::default();
+                        n.tags().iter().for_each(|(k, v)| {
+                            node_tags.set_tag(k, v);
+                        });
+                        let mut node = Node::new(id, pos);
+                        node.flags = derive_node_flags(&node_tags);
+                        nodes.push(node);
                     }
                     for w in group.iter_ways() {
                         let id = w.id();
@@ -176,13 +199,31 @@ impl<R: io::BufRead + Send> Importer<R> {
                         if way_tags.is_excluded() {
                             continue;
                         }
-                        let highway = highway_class(way_tags.highway);
+                        let highway = if way_tags.ferry {
+                            HighwayClass::Ferry
+                        } else {
+                            highway_class(way_tags.highway)
+                        };
                         let flags = way_flags(&way_tags);
                         let surface_quality = surface_quality(&way_tags);
                         let max_speed = way_tags
                             .raw_max_speed
                             .and_then(|v| tags::parse_max_speed(v, &maxspeed_map))
                             .unwrap_or(0);
+                        let max_speed_forward = way_tags
+                            .raw_max_speed_forward
+                            .and_then(|v| tags::parse_max_speed(v, &maxspeed_map))
+                            .unwrap_or(max_speed);
+                        let max_speed_backward = way_tags
+                            .raw_max_speed_backward
+                            .and_then(|v| tags::parse_max_speed(v, &maxspeed_map))
+                            .unwrap_or(max_speed);
+                        let dim = dim_restriction_from_tags(&way_tags);
+                        let dim_idx = if dim.is_none() {
+                            0u8
+                        } else {
+                            dim_table.lock().unwrap().get_or_insert(dim)
+                        };
                         let is_oneway = flags.contains(WayFlags::ONEWAY);
                         let is_reverse = is_oneway_reverse(&way_tags);
                         let mut refs = w.refs();
@@ -193,19 +234,33 @@ impl<R: io::BufRead + Send> Importer<R> {
                                 } else {
                                     (NodeId(current), NodeId(next))
                                 };
+                                let bicycle_contraflow = is_bicycle_contraflow(&way_tags);
+
                                 let mut way = Way::new(id, a.0 as u64, b.0 as u64);
                                 way.highway = highway;
                                 way.flags = flags;
-                                way.max_speed = max_speed;
+                                way.max_speed = max_speed_forward;
                                 way.surface_quality = surface_quality;
+                                way.dim_restriction_idx = dim_idx;
                                 ways.push(way);
-                                // For bidirectional roads also create the reverse edge.
+
                                 if !is_oneway && !is_reverse {
                                     let mut rev = Way::new(id, b.0 as u64, a.0 as u64);
                                     rev.highway = highway;
                                     rev.flags = flags;
-                                    rev.max_speed = max_speed;
+                                    rev.max_speed = max_speed_backward;
                                     rev.surface_quality = surface_quality;
+                                    rev.dim_restriction_idx = dim_idx;
+                                    ways.push(rev);
+                                } else if is_oneway && bicycle_contraflow {
+                                    let mut rev = Way::new(id, b.0 as u64, a.0 as u64);
+                                    rev.highway = highway;
+                                    let mut rev_flags = flags & !WayFlags::ONEWAY;
+                                    rev_flags |= WayFlags::NO_MOTOR | WayFlags::NO_HGV;
+                                    rev.flags = rev_flags;
+                                    rev.max_speed = max_speed_backward;
+                                    rev.surface_quality = surface_quality;
+                                    rev.dim_restriction_idx = dim_idx;
                                     ways.push(rev);
                                 }
                                 current = next;
@@ -307,6 +362,16 @@ impl<R: io::BufRead + Send> Importer<R> {
         tracing::info!("flush nodes and ways");
         nodes.flush().map_err(Error::WriteError)?;
         ways.flush().map_err(Error::WriteError)?;
+
+        drop(dim_table_clone);
+        let dim_table = Arc::try_unwrap(dim_table)
+            .expect("dim_table still borrowed")
+            .into_inner()
+            .unwrap();
+        tracing::info!(entries = dim_table.len(), "writing dim-restriction table");
+        dim_table
+            .write_to_file(&self.target_dir.join("dim_restrictions.bin"))
+            .map_err(Error::WriteError)?;
 
         tracing::info!("building spatial indices");
         {
@@ -486,7 +551,178 @@ fn way_flags(tags: &tags::WayTags<'_>) -> WayFlags {
         }
     }
 
+    // Toll, tunnel, bridge.
+    if tags.toll == Some(true) {
+        flags |= WayFlags::TOLL;
+    }
+    if tags.tunnel {
+        flags |= WayFlags::TUNNEL;
+    }
+    if tags.bridge {
+        flags |= WayFlags::BRIDGE;
+    }
+
     flags
+}
+
+/// Derive `NodeFlags` from parsed node tags.
+///
+/// Barrier defaults are applied first, then `access` tag overrides clear or set
+/// per-mode restrictions (same logic as `way_flags`).
+fn derive_node_flags(tags: &tags::NodeTags<'_>) -> NodeFlags {
+    use tags::{Barrier, Conditional as Cond, Mode, NodeHighway};
+    let mut flags = NodeFlags::empty();
+
+    // Barrier default flags.
+    if let Some(barrier) = tags.barrier {
+        match barrier {
+            // Blocks motor + HGV; bicycles and pedestrians can still pass.
+            Barrier::bollard => {
+                flags |= NodeFlags::NO_MOTOR | NodeFlags::NO_HGV;
+            }
+            // Gate-type: blocks motor by default; bikes often pass.
+            Barrier::gate => {
+                flags |= NodeFlags::NO_MOTOR | NodeFlags::NO_HGV;
+            }
+            // Blocks motor + HGV + bicycle; only foot can pass.
+            Barrier::kissing_gate => {
+                flags |= NodeFlags::NO_MOTOR | NodeFlags::NO_HGV | NodeFlags::NO_BICYCLE;
+            }
+            // Blocks bicycle (and motorcycle); motor vehicles and pedestrians pass.
+            Barrier::cycle_barrier => {
+                flags |= NodeFlags::NO_BICYCLE;
+            }
+            Barrier::unknown => {}
+        }
+    }
+
+    // Access tag overrides (same two-pass logic as way_flags).
+    if let Cond::Simple(a) = &tags.access
+        && a.is_excluded()
+    {
+        flags |=
+            NodeFlags::NO_MOTOR | NodeFlags::NO_HGV | NodeFlags::NO_BICYCLE | NodeFlags::NO_FOOT;
+    }
+    if let Cond::Multi(items) = &tags.access {
+        for item in items.iter().filter(|i| i.value.is_excluded()) {
+            match item.mode {
+                Mode::default => {
+                    flags |= NodeFlags::NO_MOTOR
+                        | NodeFlags::NO_HGV
+                        | NodeFlags::NO_BICYCLE
+                        | NodeFlags::NO_FOOT;
+                }
+                Mode::vehicle => {
+                    flags |= NodeFlags::NO_MOTOR | NodeFlags::NO_HGV | NodeFlags::NO_BICYCLE;
+                }
+                Mode::motor_vehicle => flags |= NodeFlags::NO_MOTOR | NodeFlags::NO_HGV,
+                Mode::motorcar | Mode::motorcycle | Mode::moped | Mode::mofa | Mode::motorhome => {
+                    flags |= NodeFlags::NO_MOTOR;
+                }
+                Mode::hgv | Mode::goods | Mode::coach | Mode::tourist_bus => {
+                    flags |= NodeFlags::NO_HGV;
+                }
+                Mode::bicycle => flags |= NodeFlags::NO_BICYCLE,
+                Mode::foot => flags |= NodeFlags::NO_FOOT,
+                _ => {}
+            }
+        }
+        for item in items.iter().filter(|i| !i.value.is_excluded()) {
+            match item.mode {
+                Mode::vehicle => {
+                    flags &= !(NodeFlags::NO_MOTOR | NodeFlags::NO_HGV | NodeFlags::NO_BICYCLE);
+                }
+                Mode::motor_vehicle => flags &= !(NodeFlags::NO_MOTOR | NodeFlags::NO_HGV),
+                Mode::motorcar | Mode::motorcycle | Mode::moped | Mode::mofa | Mode::motorhome => {
+                    flags &= !NodeFlags::NO_MOTOR;
+                }
+                Mode::hgv | Mode::goods | Mode::coach | Mode::tourist_bus => {
+                    flags &= !NodeFlags::NO_HGV;
+                }
+                Mode::bicycle => flags &= !NodeFlags::NO_BICYCLE,
+                Mode::foot => flags &= !NodeFlags::NO_FOOT,
+                _ => {}
+            }
+        }
+    }
+
+    // Traffic signals.
+    if tags
+        .highway
+        .is_some_and(|h| matches!(h, NodeHighway::traffic_signals))
+    {
+        flags |= NodeFlags::TRAFFIC_SIGNALS;
+    }
+
+    // Toll booth.
+    if tags.toll == Some(true) {
+        flags |= NodeFlags::TOLL;
+    }
+
+    flags
+}
+
+/// Parse a dimension value (height or width) from an OSM tag into decimetres.
+/// Handles bare numbers (metres), "m" suffix, and feet-inches format (skipped).
+fn parse_dim_m(v: &str) -> Option<f32> {
+    let v = v.trim();
+    if let Some(rest) = v.find('\'').map(|p| (v[..p].trim(), v[p + 1..].trim())) {
+        let feet: f32 = rest.0.parse().ok()?;
+        let inches: f32 = rest
+            .1
+            .strip_suffix('"')
+            .unwrap_or(rest.1)
+            .trim()
+            .parse()
+            .unwrap_or(0.0);
+        return Some(feet * 0.3048 + inches * 0.0254);
+    }
+    let v = v.strip_suffix('m').unwrap_or(v).trim_end();
+    v.parse::<f32>().ok()
+}
+
+/// Parse a weight value from an OSM tag into metric tonnes.
+fn parse_weight_t(v: &str) -> Option<f32> {
+    let v = v.trim();
+    let v = v.strip_suffix('t').unwrap_or(v).trim_end();
+    v.parse::<f32>().ok()
+}
+
+/// Build a [`DimRestriction`] from `maxheight`, `maxwidth`, `maxweight` tags.
+fn dim_restriction_from_tags(tags: &tags::WayTags<'_>) -> DimRestriction {
+    let height_dm = tags
+        .raw_max_height
+        .and_then(parse_dim_m)
+        .map(|m| (m * 10.0).round() as u8)
+        .unwrap_or(0);
+    let width_dm = tags
+        .raw_max_width
+        .and_then(parse_dim_m)
+        .map(|m| (m * 10.0).round() as u8)
+        .unwrap_or(0);
+    let weight_250kg = tags
+        .raw_max_weight
+        .and_then(parse_weight_t)
+        .map(|t| (t * 4.0).round() as u8) // 1t = 4 units of 250kg
+        .unwrap_or(0);
+    DimRestriction {
+        max_height_dm: height_dm,
+        max_width_dm: width_dm,
+        max_weight_250kg: weight_250kg,
+    }
+}
+
+/// Returns true if a oneway road allows bicycles in both directions
+/// (tagged `oneway:bicycle=no`).
+fn is_bicycle_contraflow(tags: &tags::WayTags<'_>) -> bool {
+    use tags::{Conditional, Mode, OneWay};
+    if let Conditional::Multi(items) = &tags.oneway {
+        items
+            .iter()
+            .any(|i| i.mode == Mode::bicycle && matches!(i.value, OneWay::no))
+    } else {
+        false
+    }
 }
 
 /// Derive a `SurfaceQuality` tier from the way's surface/smoothness/tracktype tags.

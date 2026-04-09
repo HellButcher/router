@@ -265,6 +265,9 @@ export class RouteControl implements IControl {
     }
   }
 
+  avoidToll = false;
+  avoidFerry = false;
+
   private async _fetchRoute(): Promise<void> {
     this._abortController?.abort();
     const ac = new AbortController();
@@ -281,7 +284,11 @@ export class RouteControl implements IControl {
 
     try {
       const { data, error } = await client.POST("/api/v1/route", {
-        body: { locations },
+        body: {
+          locations,
+          avoid_toll: this.avoidToll || undefined,
+          avoid_ferry: this.avoidFerry || undefined,
+        },
         signal: ac.signal,
       });
 

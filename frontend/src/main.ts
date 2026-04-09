@@ -166,6 +166,8 @@ let routeState: RouteUpdate = {
   error: null,
   loading: false,
 };
+let avoidToll = false;
+let avoidFerry = false;
 let locateInfo: LocateInfo | null = null;
 let isochroneControl: IsochroneControl | null = null;
 let isochroneState: IsochroneUpdate = {
@@ -199,14 +201,32 @@ function formatCoord(v: number) {
   return v.toFixed(5);
 }
 
-function flagList(way: NonNullable<LocateInfo["way"]>): LocalizedString[] {
-  const t = LL().locate.flags;
+function wayFlagList(way: NonNullable<LocateInfo["way"]>): LocalizedString[] {
+  const t = LL().locate.wayFlags;
   return [
     way.oneway ? t.oneway() : null,
     way.no_motor ? t.noMotor() : null,
     way.no_bicycle ? t.noBicycle() : null,
     way.no_foot ? t.noFoot() : null,
     way.no_hgv ? t.noHgv() : null,
+    way.toll ? t.toll() : null,
+    way.tunnel ? t.tunnel() : null,
+    way.bridge ? t.bridge() : null,
+    way.ferry ? t.ferry() : null,
+  ].filter((f): f is LocalizedString => f !== null);
+}
+
+function nodeFlagList(
+  node: NonNullable<LocateInfo["node"]>,
+): LocalizedString[] {
+  const t = LL().locate.nodeFlags;
+  return [
+    node.no_motor ? t.noMotor() : null,
+    node.no_hgv ? t.noHgv() : null,
+    node.no_bicycle ? t.noBicycle() : null,
+    node.no_foot ? t.noFoot() : null,
+    node.traffic_signals ? t.trafficSignals() : null,
+    node.toll ? t.toll() : null,
   ].filter((f): f is LocalizedString => f !== null);
 }
 
@@ -254,6 +274,33 @@ function sidebarTemplate() {
             )
       }
     </section>
+
+    <div class="route-options">
+      <label class="route-option-label">
+        <input
+          type="checkbox"
+          .checked=${avoidToll}
+          @change=${(e: Event) => {
+            avoidToll = (e.target as HTMLInputElement).checked;
+            if (routeControl) routeControl.avoidToll = avoidToll;
+            updateSidebar();
+          }}
+        />
+        ${t.route.avoidToll()}
+      </label>
+      <label class="route-option-label">
+        <input
+          type="checkbox"
+          .checked=${avoidFerry}
+          @change=${(e: Event) => {
+            avoidFerry = (e.target as HTMLInputElement).checked;
+            if (routeControl) routeControl.avoidFerry = avoidFerry;
+            updateSidebar();
+          }}
+        />
+        ${t.route.avoidFerry()}
+      </label>
+    </div>
 
     <div class="route-actions">
       <button
@@ -398,6 +445,7 @@ function sidebarTemplate() {
               <div class="locate-info-row"><span>${t.locate.inspect.osmNodeId()}</span><span>${locateInfo.node.id}</span></div>
               <div class="locate-info-row"><span>${t.locate.inspect.lat()}</span><span>${locateInfo.node.lat.toFixed(6)}</span></div>
               <div class="locate-info-row"><span>${t.locate.inspect.lon()}</span><span>${locateInfo.node.lon.toFixed(6)}</span></div>
+              ${nodeFlagList(locateInfo.node).length > 0 ? html`<div class="locate-info-row"><span>${t.locate.inspect.nodeFlags()}</span><span>${nodeFlagList(locateInfo.node).join(", ")}</span></div>` : ""}
             `
                 : ""
             }
@@ -406,12 +454,15 @@ function sidebarTemplate() {
                 ? html`
               <div class="locate-info-row"><span>${t.locate.inspect.osmWayId()}</span><span>${locateInfo.way.id}</span></div>
               <div class="locate-info-row"><span>${t.locate.inspect.highway()}</span><span>${locateInfo.way.highway}</span></div>
-              <div class="locate-info-row"><span>${t.locate.inspect.maxSpeed()}</span><span>${locateInfo.way.max_speed > 0 ? t.locate.inspect.maxSpeedKmh({ speed: locateInfo.way.max_speed }) : t.locate.inspect.maxSpeedDefault()}</span></div>
+              <div class="locate-info-row"><span>${t.locate.inspect.maxSpeed()}</span><span>${locateInfo.way.max_speed ? t.locate.inspect.maxSpeedKmh({ speed: locateInfo.way.max_speed }) : t.locate.inspect.maxSpeedDefault()}</span></div>
               <div class="locate-info-row"><span>${t.locate.inspect.surfaceQuality()}</span><span>${locateInfo.way.surface_quality}</span></div>
               ${locateInfo.way.country_id ? html`<div class="locate-info-row"><span>${t.locate.inspect.country()}</span><span>${locateInfo.way.country_id}</span></div>` : ""}
               <div class="locate-info-row"><span>${t.locate.inspect.distM()}</span><span>${t.locate.inspect.distMValue({ dist: locateInfo.way.dist_m })}</span></div>
               ${locateInfo.location.fraction != null ? html`<div class="locate-info-row"><span>${t.locate.inspect.fraction()}</span><span>${locateInfo.location.fraction.toFixed(3)}</span></div>` : ""}
-              ${flagList(locateInfo.way).length > 0 ? html`<div class="locate-info-row"><span>${t.locate.inspect.flags()}</span><span>${flagList(locateInfo.way).join(", ")}</span></div>` : ""}
+              ${wayFlagList(locateInfo.way).length > 0 ? html`<div class="locate-info-row"><span>${t.locate.inspect.flags()}</span><span>${wayFlagList(locateInfo.way).join(", ")}</span></div>` : ""}
+              ${locateInfo.way.max_height_dm ? html`<div class="locate-info-row"><span>${t.locate.inspect.maxHeight()}</span><span>${t.locate.inspect.dmValue({ val: locateInfo.way.max_height_dm, m: locateInfo.way.max_height_dm / 10 })}</span></div>` : ""}
+              ${locateInfo.way.max_width_dm ? html`<div class="locate-info-row"><span>${t.locate.inspect.maxWidth()}</span><span>${t.locate.inspect.dmValue({ val: locateInfo.way.max_width_dm, m: locateInfo.way.max_width_dm / 10 })}</span></div>` : ""}
+              ${locateInfo.way.max_weight_250kg ? html`<div class="locate-info-row"><span>${t.locate.inspect.maxWeight()}</span><span>${t.locate.inspect.weight250kgValue({ val: locateInfo.way.max_weight_250kg, t: locateInfo.way.max_weight_250kg * 0.25 })}</span></div>` : ""}
               <div class="locate-info-subheader">${t.locate.inspect.fromNode()}</div>
               <div class="locate-info-row"><span>${t.locate.inspect.osmNodeId()}</span><span>${locateInfo.way.from_node.id}</span></div>
               <div class="locate-info-row"><span>${t.locate.inspect.position()}</span><span>${locateInfo.way.from_node.lat.toFixed(5)}, ${locateInfo.way.from_node.lon.toFixed(5)}</span></div>
