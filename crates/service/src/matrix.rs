@@ -174,7 +174,7 @@ impl Service {
         let speed_map = SpeedMap {
             profile,
             speed_config: &self.speed_config,
-            dim_table: &self.dim_table,
+            way_extended: &self.way_extended,
             avoid_toll: request.avoid_toll,
             avoid_ferry: request.avoid_ferry,
         };

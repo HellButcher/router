@@ -1,9 +1,10 @@
 use router_storage::{
     data::{
         attrib::{HighwayClass, NodeFlags, WayFlags},
-        dim_restriction::DimRestrictionsTable,
+        dim_restriction::DimRestriction,
         node::Node,
         way::Way,
+        way_extended::WayExtended,
     },
     tablefile::TableFile,
 };
@@ -114,11 +115,20 @@ impl WayMeta {
     pub fn from(
         way: &Way,
         nodes: &TableFile<Node>,
-        dim_table: &DimRestrictionsTable,
+        way_extended: &TableFile<WayExtended>,
     ) -> std::io::Result<Self> {
         let from_node = nodes.get(way.from_node_idx as usize)?;
         let to_node = nodes.get(way.to_node_idx as usize)?;
-        let dim = dim_table.get(way.dim_restriction_idx);
+        let dim = if way.flags.contains(WayFlags::HAS_EXTENDED) {
+            way_extended
+                .find(&way.id)
+                .ok()
+                .flatten()
+                .map(|(_, e)| e.dim)
+                .unwrap_or(DimRestriction::NONE)
+        } else {
+            DimRestriction::NONE
+        };
         Ok(Self {
             id: way.id.0,
             highway: format!("{:?}", way.highway),

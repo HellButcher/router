@@ -2,10 +2,11 @@ use std::collections::HashMap;
 
 use router_algorithm::convex_hull::convex_hull;
 use router_algorithm::dikstra::dijkstra_within_budget;
-use router_storage::data::dim_restriction::DimRestrictionsTable;
 use router_storage::data::node::Node;
 use router_storage::data::way::Way;
+use router_storage::data::way_extended::WayExtended;
 use router_storage::tablefile::TableFile;
+
 use router_types::coordinate::LatLon;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -131,7 +132,7 @@ impl Service {
             &self.ways,
             profile,
             &self.speed_config,
-            &self.dim_table,
+            &self.way_extended,
             request.avoid_toll,
             request.avoid_ferry,
             request.unit,
@@ -190,7 +191,7 @@ fn run_isochrone(
     ways: &TableFile<Way>,
     profile: &Profile,
     speed_config: &crate::speed_config::SpeedConfig,
-    dim_table: &DimRestrictionsTable,
+    way_extended: &TableFile<WayExtended>,
     avoid_toll: bool,
     avoid_ferry: bool,
     unit: IsochroneUnit,
@@ -215,7 +216,7 @@ fn run_isochrone(
                 cost_model: SpeedMap {
                     profile,
                     speed_config,
-                    dim_table,
+                    way_extended,
                     avoid_toll,
                     avoid_ferry,
                 },

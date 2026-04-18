@@ -11,6 +11,7 @@ pub mod attrib;
 pub mod dim_restriction;
 pub mod node;
 pub mod way;
+pub mod way_extended;
 
 #[repr(C)]
 pub struct SimpleHeader<I> {

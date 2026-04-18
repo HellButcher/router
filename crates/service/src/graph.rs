@@ -2,9 +2,9 @@ use router_algorithm::{Edge, Graph};
 use router_storage::{
     data::{
         attrib::{HighwayClass, NodeFlags, WayFlags},
-        dim_restriction::DimRestrictionsTable,
         node::{NO_WAY, Node},
         way::Way,
+        way_extended::WayExtended,
         way_index_from_ptr,
     },
     tablefile::TableFile,
@@ -77,8 +77,8 @@ impl CostModel for DistanceCost {
 pub struct SpeedMap<'p> {
     pub profile: &'p Profile,
     pub speed_config: &'p SpeedConfig,
-    /// Dimension-restriction lookup table.
-    pub dim_table: &'p DimRestrictionsTable,
+    /// Extended way attributes (dim restrictions, etc.).
+    pub way_extended: &'p TableFile<WayExtended>,
     /// When `true`, any way or node with the TOLL flag is treated as impassable
     /// rather than adding `profile.toll_penalty_ms`.
     pub avoid_toll: bool,
@@ -121,12 +121,16 @@ impl SpeedMap<'_> {
         if way_is_blocked(way, self.profile.vehicle_type) {
             return None;
         }
-        // Check dimension restrictions.
-        {
+        // Check dimension restrictions (only for ways that have extended attributes).
+        if way.flags.contains(WayFlags::HAS_EXTENDED) {
             let dim = self.profile.vehicle_dim;
-            let restriction = self.dim_table.get(way.dim_restriction_idx);
-            if restriction.blocks_vehicle(dim.height_dm, dim.width_dm, dim.weight_250kg) {
-                return None;
+            if let Ok(Some((_, ext))) = self.way_extended.find(&way.id) {
+                if ext
+                    .dim
+                    .blocks_vehicle(dim.height_dm, dim.width_dm, dim.weight_250kg)
+                {
+                    return None;
+                }
             }
         }
         // Toll handling: hard block or soft penalty.

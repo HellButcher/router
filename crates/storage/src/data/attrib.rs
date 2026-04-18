@@ -4,23 +4,25 @@ bitflags! {
     /// Access and direction restrictions encoded per-way.
     #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
     #[repr(transparent)]
-    pub struct WayFlags: u8 {
+    pub struct WayFlags: u16 {
         /// Way is only traversable from → to (forward direction).
-        const ONEWAY         = 0b0000_0001;
-        /// Motor vehicles not allowed.
-        const NO_MOTOR       = 0b0000_0100;
-        /// HGV (heavy goods vehicles) not allowed.
-        const NO_HGV         = 0b0000_1000;
-        /// Bicycles not allowed.
-        const NO_BICYCLE     = 0b0001_0000;
-        /// Pedestrians not allowed.
-        const NO_FOOT        = 0b0010_0000;
+        const ONEWAY         = 0x0001;
         /// Toll road — passing this way incurs a toll charge.
-        const TOLL           = 0b0000_0010;
+        const TOLL           = 0x0002;
+        /// Motor vehicles not allowed.
+        const NO_MOTOR       = 0x0004;
+        /// HGV (heavy goods vehicles) not allowed.
+        const NO_HGV         = 0x0008;
+        /// Bicycles not allowed.
+        const NO_BICYCLE     = 0x0010;
+        /// Pedestrians not allowed.
+        const NO_FOOT        = 0x0020;
         /// Way passes through a tunnel.
-        const TUNNEL         = 0b0100_0000;
+        const TUNNEL         = 0x0040;
         /// Way is on a bridge.
-        const BRIDGE         = 0b1000_0000;
+        const BRIDGE         = 0x0080;
+        /// Way has an entry in the extended-attributes table (`way_extended.bin`).
+        const HAS_EXTENDED   = 0x0100;
     }
 }
 

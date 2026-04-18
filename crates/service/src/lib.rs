@@ -18,7 +18,7 @@ pub mod virtual_graph;
 use crate::error::{Error, Result};
 use profile::{PROFILES, Profile};
 use router_storage::{
-    data::{dim_restriction::DimRestrictionsTable, node::Node, way::Way},
+    data::{node::Node, way::Way, way_extended::WayExtended},
     spatial::SpatialIndex,
     tablefile::TableFile,
 };
@@ -52,7 +52,7 @@ pub struct Service {
     pub(crate) ways: TableFile<Way>,
     pub(crate) max_radius_m: f32,
     pub(crate) speed_config: SpeedConfig,
-    pub(crate) dim_table: DimRestrictionsTable,
+    pub(crate) way_extended: TableFile<WayExtended>,
 }
 
 impl Service {
@@ -66,9 +66,9 @@ impl Service {
 
         let speed_config = options.speed_config;
 
-        let dim_table = DimRestrictionsTable::read_from_file(
-            &options.storage_dir.join("dim_restrictions.bin"),
-        )?;
+        let way_extended =
+            TableFile::<WayExtended>::open_read_only(options.storage_dir.join("way_extended.bin"))?;
+        way_extended.header()?.verify()?;
 
         Ok(Self {
             profiles: PROFILES.to_vec(),
@@ -78,7 +78,7 @@ impl Service {
             ways,
             max_radius_m: options.max_radius_m,
             speed_config,
-            dim_table,
+            way_extended,
         })
     }
 

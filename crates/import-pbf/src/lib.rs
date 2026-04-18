@@ -9,10 +9,11 @@ use rayon::iter::{
 use router_storage::{
     data::{
         attrib::{HighwayClass, NodeFlags, SurfaceQuality, WayFlags},
-        dim_restriction::{DimRestriction, DimRestrictionsTable},
+        dim_restriction::DimRestriction,
         link_nodes_and_ways,
         node::{Node, NodeId},
         way::{Way, WayId},
+        way_extended::WayExtended,
     },
     spatial::SpatialIndexBuilder,
     spatial::haversine_m,
@@ -24,7 +25,6 @@ use std::{
     fs::File,
     io::{self, BufReader},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
 };
 use thiserror::Error;
 
@@ -247,138 +247,144 @@ impl<R: io::BufRead + Send> Importer<R> {
             .map_err(Error::WriteError)?;
         let mut ways = TableFile::<Way>::open_override(self.target_dir.join("ways.bin"))
             .map_err(Error::WriteError)?;
+        let mut way_extended =
+            TableFile::<WayExtended>::open_override(self.target_dir.join("way_extended.bin"))
+                .map_err(Error::WriteError)?;
 
         let mut nodes_append = nodes.appender().map_err(Error::WriteError)?.spawn();
         let mut ways_append = ways.appender().map_err(Error::WriteError)?.spawn();
-
-        let dim_table: Arc<Mutex<DimRestrictionsTable>> =
-            Arc::new(Mutex::new(DimRestrictionsTable::default()));
+        let mut way_extended_append = way_extended.appender().map_err(Error::WriteError)?.spawn();
 
         let _span = tracing::info_span!("import").entered();
         let _span = tracing::info_span!("parse_blobs").entered();
-        let dim_table_clone = Arc::clone(&dim_table);
         blobs
             .into_iter()
-            .map(|b| (nodes_append.start(), ways_append.start(), b))
+            .map(|b| {
+                (
+                    nodes_append.start(),
+                    ways_append.start(),
+                    way_extended_append.start(),
+                    b,
+                )
+            })
             .par_bridge()
-            .try_for_each(|(nodes_appender, ways_appender, blob)| -> Result<()> {
-                let dim_table = &dim_table_clone;
-                let data = blob?.into_decoded()?;
-                let mut nodes = Vec::new();
-                let mut ways = Vec::new();
-                let mut old_id = i64::MIN;
-                for group in data.iter_groups() {
-                    for n in group.iter_nodes() {
-                        let id = NodeId(n.id());
-                        assert!(id.0 > old_id);
-                        old_id = id.0;
-                        let pos = LatLon(n.lat_deg() as f32, n.lon_deg() as f32);
-                        let mut node_tags = NodeTags::default();
-                        n.tags().iter().for_each(|(k, v)| {
-                            node_tags.set_tag(k, v);
-                        });
-                        let mut node = Node::new(id, pos);
-                        node.flags = derive_node_flags(&node_tags);
-                        nodes.push(node);
-                    }
-                    for n in group.iter_dense_nodes() {
-                        let id = NodeId(n.id());
-                        assert!(id.0 > old_id);
-                        old_id = id.0;
-                        let pos = LatLon(n.lat_deg() as f32, n.lon_deg() as f32);
-                        let mut node_tags = NodeTags::default();
-                        n.tags().iter().for_each(|(k, v)| {
-                            node_tags.set_tag(k, v);
-                        });
-                        let mut node = Node::new(id, pos);
-                        node.flags = derive_node_flags(&node_tags);
-                        nodes.push(node);
-                    }
-                    for w in group.iter_ways() {
-                        let id = w.id();
-                        assert!(id > old_id);
-                        old_id = id;
-                        let id = WayId(id);
-                        let mut way_tags = WayTags::default();
-                        w.tags().iter().for_each(|(k, v)| {
-                            way_tags.set_tag(k, v);
-                        });
-                        if way_tags.is_excluded() {
-                            continue;
+            .try_for_each(
+                |(nodes_appender, ways_appender, extended_appender, blob)| -> Result<()> {
+                    let data = blob?.into_decoded()?;
+                    let mut nodes = Vec::new();
+                    let mut ways = Vec::new();
+                    let mut extended = Vec::new();
+                    let mut old_id = i64::MIN;
+                    for group in data.iter_groups() {
+                        for n in group.iter_nodes() {
+                            let id = NodeId(n.id());
+                            assert!(id.0 > old_id);
+                            old_id = id.0;
+                            let pos = LatLon(n.lat_deg() as f32, n.lon_deg() as f32);
+                            let mut node_tags = NodeTags::default();
+                            n.tags().iter().for_each(|(k, v)| {
+                                node_tags.set_tag(k, v);
+                            });
+                            let mut node = Node::new(id, pos);
+                            node.flags = derive_node_flags(&node_tags);
+                            nodes.push(node);
                         }
-                        let highway = if way_tags.ferry {
-                            HighwayClass::Ferry
-                        } else {
-                            highway_class(way_tags.highway)
-                        };
-                        let flags = way_flags(&way_tags);
-                        let surface_quality = surface_quality(&way_tags);
-                        let max_speed = way_tags
-                            .raw_max_speed
-                            .and_then(|v| tags::parse_max_speed(v, &maxspeed_map))
-                            .unwrap_or(0);
-                        let max_speed_forward = way_tags
-                            .raw_max_speed_forward
-                            .and_then(|v| tags::parse_max_speed(v, &maxspeed_map))
-                            .unwrap_or(max_speed);
-                        let max_speed_backward = way_tags
-                            .raw_max_speed_backward
-                            .and_then(|v| tags::parse_max_speed(v, &maxspeed_map))
-                            .unwrap_or(max_speed);
-                        let dim = dim_restriction_from_tags(&way_tags);
-                        let dim_idx = if dim.is_none() {
-                            0u8
-                        } else {
-                            dim_table.lock().unwrap().get_or_insert(dim)
-                        };
-                        let is_oneway = flags.contains(WayFlags::ONEWAY);
-                        let is_reverse = is_oneway_reverse(&way_tags);
-                        let mut refs = w.refs();
-                        if let Some(mut current) = refs.next() {
-                            for next in refs {
-                                let (a, b) = if is_reverse {
-                                    (NodeId(next), NodeId(current))
-                                } else {
-                                    (NodeId(current), NodeId(next))
-                                };
-                                let bicycle_contraflow = is_bicycle_contraflow(&way_tags);
+                        for n in group.iter_dense_nodes() {
+                            let id = NodeId(n.id());
+                            assert!(id.0 > old_id);
+                            old_id = id.0;
+                            let pos = LatLon(n.lat_deg() as f32, n.lon_deg() as f32);
+                            let mut node_tags = NodeTags::default();
+                            n.tags().iter().for_each(|(k, v)| {
+                                node_tags.set_tag(k, v);
+                            });
+                            let mut node = Node::new(id, pos);
+                            node.flags = derive_node_flags(&node_tags);
+                            nodes.push(node);
+                        }
+                        for w in group.iter_ways() {
+                            let id = w.id();
+                            assert!(id > old_id);
+                            old_id = id;
+                            let id = WayId(id);
+                            let mut way_tags = WayTags::default();
+                            w.tags().iter().for_each(|(k, v)| {
+                                way_tags.set_tag(k, v);
+                            });
+                            if way_tags.is_excluded() {
+                                continue;
+                            }
+                            let highway = if way_tags.ferry {
+                                HighwayClass::Ferry
+                            } else {
+                                highway_class(way_tags.highway)
+                            };
+                            let dim = dim_restriction_from_tags(&way_tags);
+                            let mut flags = way_flags(&way_tags);
+                            if !dim.is_none() {
+                                flags |= WayFlags::HAS_EXTENDED;
+                                extended.push(WayExtended::new(id, dim));
+                            }
+                            let surface_quality = surface_quality(&way_tags);
+                            let max_speed = way_tags
+                                .raw_max_speed
+                                .and_then(|v| tags::parse_max_speed(v, &maxspeed_map))
+                                .unwrap_or(0);
+                            let max_speed_forward = way_tags
+                                .raw_max_speed_forward
+                                .and_then(|v| tags::parse_max_speed(v, &maxspeed_map))
+                                .unwrap_or(max_speed);
+                            let max_speed_backward = way_tags
+                                .raw_max_speed_backward
+                                .and_then(|v| tags::parse_max_speed(v, &maxspeed_map))
+                                .unwrap_or(max_speed);
+                            let is_oneway = flags.contains(WayFlags::ONEWAY);
+                            let is_reverse = is_oneway_reverse(&way_tags);
+                            let mut refs = w.refs();
+                            if let Some(mut current) = refs.next() {
+                                for next in refs {
+                                    let (a, b) = if is_reverse {
+                                        (NodeId(next), NodeId(current))
+                                    } else {
+                                        (NodeId(current), NodeId(next))
+                                    };
+                                    let bicycle_contraflow = is_bicycle_contraflow(&way_tags);
 
-                                let mut way = Way::new(id, a.0 as u64, b.0 as u64);
-                                way.highway = highway;
-                                way.flags = flags;
-                                way.max_speed = max_speed_forward;
-                                way.surface_quality = surface_quality;
-                                way.dim_restriction_idx = dim_idx;
-                                ways.push(way);
+                                    let mut way = Way::new(id, a.0 as u64, b.0 as u64);
+                                    way.highway = highway;
+                                    way.flags = flags;
+                                    way.max_speed = max_speed_forward;
+                                    way.surface_quality = surface_quality;
+                                    ways.push(way);
 
-                                if !is_oneway && !is_reverse {
-                                    let mut rev = Way::new(id, b.0 as u64, a.0 as u64);
-                                    rev.highway = highway;
-                                    rev.flags = flags;
-                                    rev.max_speed = max_speed_backward;
-                                    rev.surface_quality = surface_quality;
-                                    rev.dim_restriction_idx = dim_idx;
-                                    ways.push(rev);
-                                } else if is_oneway && bicycle_contraflow {
-                                    let mut rev = Way::new(id, b.0 as u64, a.0 as u64);
-                                    rev.highway = highway;
-                                    let mut rev_flags = flags & !WayFlags::ONEWAY;
-                                    rev_flags |= WayFlags::NO_MOTOR | WayFlags::NO_HGV;
-                                    rev.flags = rev_flags;
-                                    rev.max_speed = max_speed_backward;
-                                    rev.surface_quality = surface_quality;
-                                    rev.dim_restriction_idx = dim_idx;
-                                    ways.push(rev);
+                                    if !is_oneway && !is_reverse {
+                                        let mut rev = Way::new(id, b.0 as u64, a.0 as u64);
+                                        rev.highway = highway;
+                                        rev.flags = flags;
+                                        rev.max_speed = max_speed_backward;
+                                        rev.surface_quality = surface_quality;
+                                        ways.push(rev);
+                                    } else if is_oneway && bicycle_contraflow {
+                                        let mut rev = Way::new(id, b.0 as u64, a.0 as u64);
+                                        rev.highway = highway;
+                                        let mut rev_flags = flags & !WayFlags::ONEWAY;
+                                        rev_flags |= WayFlags::NO_MOTOR | WayFlags::NO_HGV;
+                                        rev.flags = rev_flags;
+                                        rev.max_speed = max_speed_backward;
+                                        rev.surface_quality = surface_quality;
+                                        ways.push(rev);
+                                    }
+                                    current = next;
                                 }
-                                current = next;
                             }
                         }
                     }
-                }
-                nodes_appender.done(nodes);
-                ways_appender.done(ways);
-                Ok(())
-            })?;
+                    nodes_appender.done(nodes);
+                    ways_appender.done(ways);
+                    extended_appender.done(extended);
+                    Ok(())
+                },
+            )?;
 
         nodes_append
             .join()
@@ -388,8 +394,17 @@ impl<R: io::BufRead + Send> Importer<R> {
             .join()
             .expect("the way-writer thread has panicked");
 
+        way_extended_append
+            .join()
+            .expect("the way-extended-writer thread has panicked");
+
+        tracing::info!(
+            nodes = nodes.len(),
+            ways = ways.len(),
+            extended = way_extended.len(),
+            "written nodes and ways"
+        );
         drop(_span);
-        tracing::info!("written nodes and ways");
 
         {
             let _span = tracing::info_span!("link_nodes_and_ways").entered();
@@ -469,16 +484,6 @@ impl<R: io::BufRead + Send> Importer<R> {
         tracing::info!("flush nodes and ways");
         nodes.flush().map_err(Error::WriteError)?;
         ways.flush().map_err(Error::WriteError)?;
-
-        drop(dim_table_clone);
-        let dim_table = Arc::try_unwrap(dim_table)
-            .expect("dim_table still borrowed")
-            .into_inner()
-            .unwrap();
-        tracing::info!(entries = dim_table.len(), "writing dim-restriction table");
-        dim_table
-            .write_to_file(&self.target_dir.join("dim_restrictions.bin"))
-            .map_err(Error::WriteError)?;
 
         tracing::info!("building spatial indices");
         {

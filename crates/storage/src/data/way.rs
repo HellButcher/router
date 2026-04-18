@@ -41,8 +41,6 @@ pub struct Way {
     pub surface_quality: SurfaceQuality,
     /// Country where this way segment is located.
     pub country_id: CountryId,
-    /// Index into the dim-restriction table; 0 = no restrictions.
-    pub dim_restriction_idx: u8,
     /// Pre-computed haversine distance between `from_node` and `to_node` in metres,
     /// clamped to [`u16::MAX`] (≈ 65 km). Set during the node-index resolution pass.
     pub dist_m: u16,
@@ -73,7 +71,6 @@ impl Way {
             flags: WayFlags::empty(),
             surface_quality: SurfaceQuality::Unknown,
             country_id: CountryId::UNKNOWN,
-            dim_restriction_idx: 0,
             dist_m: 0,
         }
     }
@@ -120,5 +117,5 @@ impl TableData for Way {
 
 impl Versioned for Way {
     // The version number should be incremented whenever the in-memory representation of `Way` changes in a non-compatible way, such that old data files can no longer be read correctly.
-    const VERSION: u32 = 3;
+    const VERSION: u32 = 4;
 }
