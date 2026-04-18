@@ -268,10 +268,6 @@ impl<C: CostModel> Iterator for WayIter<'_, C> {
                 way.next_way()
             };
 
-            if self.reverse && way.flags.contains(WayFlags::ONEWAY) {
-                continue;
-            }
-
             let way_from_idx = way.from_node_idx as usize;
             let way_to_idx = way.to_node_idx as usize;
             let neighbour_idx = if self.reverse {
