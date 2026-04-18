@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use router_algorithm::convex_hull::convex_hull;
 use router_algorithm::dikstra::dijkstra_within_budget;
+use router_storage::data::edge::Edge;
 use router_storage::data::node::Node;
 use router_storage::data::way::Way;
-use router_storage::data::way_extended::WayExtended;
 use router_storage::tablefile::TableFile;
 
 use router_types::coordinate::LatLon;
@@ -106,6 +106,7 @@ impl Service {
 
         let snapper = EdgeSnapper {
             nodes: &self.nodes,
+            edges: &self.edges,
             ways: &self.ways,
             edge_spatial: &self.edge_spatial,
         };
@@ -129,10 +130,10 @@ impl Service {
             &origin_snap,
             max_cost,
             &self.nodes,
+            &self.edges,
             &self.ways,
             profile,
             &self.speed_config,
-            &self.way_extended,
             request.avoid_toll,
             request.avoid_ferry,
             request.unit,
@@ -188,10 +189,10 @@ fn run_isochrone(
     origin_snap: &Snap,
     max_cost: usize,
     nodes: &TableFile<Node>,
+    edges: &TableFile<Edge>,
     ways: &TableFile<Way>,
     profile: &Profile,
     speed_config: &crate::speed_config::SpeedConfig,
-    way_extended: &TableFile<WayExtended>,
     avoid_toll: bool,
     avoid_ferry: bool,
     unit: IsochroneUnit,
@@ -200,6 +201,7 @@ fn run_isochrone(
         IsochroneUnit::Km | IsochroneUnit::Mi => {
             let inner = RoadGraph {
                 nodes,
+                edges,
                 ways,
                 cost_model: DistanceCost {
                     vehicle_type: profile.vehicle_type,
@@ -212,11 +214,11 @@ fn run_isochrone(
         IsochroneUnit::Min => {
             let inner = RoadGraph {
                 nodes,
+                edges,
                 ways,
                 cost_model: SpeedMap {
                     profile,
                     speed_config,
-                    way_extended,
                     avoid_toll,
                     avoid_ferry,
                 },

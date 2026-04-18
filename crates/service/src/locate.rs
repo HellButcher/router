@@ -4,7 +4,7 @@ use std::num::NonZeroU64;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::meta::{NodeMeta, WayMeta};
+use crate::meta::{EdgeMeta, NodeMeta};
 use crate::snap::EdgeSnapper;
 
 pub use super::common::Points;
@@ -44,7 +44,7 @@ pub struct LocateRequest {
     /// segment. Defaults to [`SnapMode::Node`].
     #[cfg_attr(feature = "serde", serde(default))]
     pub snap_mode: SnapMode,
-    /// When `true`, the response locations include [`NodeMeta`] / [`WayMeta`].
+    /// When `true`, the response locations include [`NodeMeta`] / [`EdgeMeta`].
     /// Defaults to `false` to keep responses small.
     #[cfg_attr(feature = "serde", serde(default))]
     pub with_meta: bool,
@@ -102,6 +102,7 @@ impl Service {
         let max_radius_m = self.max_radius_m;
         let snapper = EdgeSnapper {
             nodes: &self.nodes,
+            edges: &self.edges,
             ways: &self.ways,
             edge_spatial: &self.edge_spatial,
         };
@@ -130,10 +131,10 @@ impl Service {
                         loc.way_id = NonZeroU64::new(snap.way_id);
                         loc.fraction = Some(snap.fraction);
                         if request.with_meta
-                            && let Ok(way) = self.ways.get(snap.way_idx)
+                            && let Ok(edge) = self.edges.get(snap.edge_idx)
+                            && let Ok(way) = self.ways.get(edge.way_idx())
                         {
-                            loc.way_meta =
-                                WayMeta::from(&way, &self.nodes, &self.way_extended).ok();
+                            loc.edge_meta = EdgeMeta::from(&edge, &way, &self.nodes).ok();
                         }
                     }
                 }

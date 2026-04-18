@@ -183,13 +183,13 @@ type RootTranslation = {
 			 * @param {number} m
 			 * @param {number} val
 			 */
-			dmValue: RequiredParams<'m' | 'val'>
+			cmValue: RequiredParams<'m' | 'val'>
 			/**
 			 * {​v​a​l​}​ ​×​ ​2​5​0​ ​k​g​ ​(​{​t​}​ ​t​)
 			 * @param {number} t
 			 * @param {number} val
 			 */
-			weight250kgValue: RequiredParams<'t' | 'val'>
+			weightKgValue: RequiredParams<'t' | 'val'>
 			/**
 			 * F​r​o​m​ ​n​o​d​e
 			 */
@@ -486,11 +486,11 @@ export type TranslationFunctions = {
 			/**
 			 * {val} dm ({m} m)
 			 */
-			dmValue: (arg: { m: number, val: number }) => LocalizedString
+			cmValue: (arg: { m: number, val: number }) => LocalizedString
 			/**
 			 * {val} × 250 kg ({t} t)
 			 */
-			weight250kgValue: (arg: { t: number, val: number }) => LocalizedString
+			weightKgValue: (arg: { t: number, val: number }) => LocalizedString
 			/**
 			 * From node
 			 */

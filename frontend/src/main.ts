@@ -460,9 +460,9 @@ function sidebarTemplate() {
               <div class="locate-info-row"><span>${t.locate.inspect.distM()}</span><span>${t.locate.inspect.distMValue({ dist: locateInfo.way.dist_m })}</span></div>
               ${locateInfo.location.fraction != null ? html`<div class="locate-info-row"><span>${t.locate.inspect.fraction()}</span><span>${locateInfo.location.fraction.toFixed(3)}</span></div>` : ""}
               ${wayFlagList(locateInfo.way).length > 0 ? html`<div class="locate-info-row"><span>${t.locate.inspect.flags()}</span><span>${wayFlagList(locateInfo.way).join(", ")}</span></div>` : ""}
-              ${locateInfo.way.max_height_dm ? html`<div class="locate-info-row"><span>${t.locate.inspect.maxHeight()}</span><span>${t.locate.inspect.dmValue({ val: locateInfo.way.max_height_dm, m: locateInfo.way.max_height_dm / 10 })}</span></div>` : ""}
-              ${locateInfo.way.max_width_dm ? html`<div class="locate-info-row"><span>${t.locate.inspect.maxWidth()}</span><span>${t.locate.inspect.dmValue({ val: locateInfo.way.max_width_dm, m: locateInfo.way.max_width_dm / 10 })}</span></div>` : ""}
-              ${locateInfo.way.max_weight_250kg ? html`<div class="locate-info-row"><span>${t.locate.inspect.maxWeight()}</span><span>${t.locate.inspect.weight250kgValue({ val: locateInfo.way.max_weight_250kg, t: locateInfo.way.max_weight_250kg * 0.25 })}</span></div>` : ""}
+              ${locateInfo.way.max_height_cm ? html`<div class="locate-info-row"><span>${t.locate.inspect.maxHeight()}</span><span>${t.locate.inspect.cmValue({ val: locateInfo.way.max_height_cm, m: locateInfo.way.max_height_cm / 100 })}</span></div>` : ""}
+              ${locateInfo.way.max_width_cm ? html`<div class="locate-info-row"><span>${t.locate.inspect.maxWidth()}</span><span>${t.locate.inspect.cmValue({ val: locateInfo.way.max_width_cm, m: locateInfo.way.max_width_cm / 100 })}</span></div>` : ""}
+              ${locateInfo.way.max_weight_kg ? html`<div class="locate-info-row"><span>${t.locate.inspect.maxWeight()}</span><span>${t.locate.inspect.weightKgValue({ val: locateInfo.way.max_weight_kg, t: locateInfo.way.max_weight_kg / 1000 })}</span></div>` : ""}
               <div class="locate-info-subheader">${t.locate.inspect.fromNode()}</div>
               <div class="locate-info-row"><span>${t.locate.inspect.osmNodeId()}</span><span>${locateInfo.way.from_node.id}</span></div>
               <div class="locate-info-row"><span>${t.locate.inspect.position()}</span><span>${locateInfo.way.from_node.lat.toFixed(5)}, ${locateInfo.way.from_node.lon.toFixed(5)}</span></div>

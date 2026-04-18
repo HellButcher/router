@@ -12,7 +12,7 @@ import { LL } from "../i18n/index.js";
 
 type Location = components["schemas"]["Location"];
 type NodeMeta = components["schemas"]["NodeMeta"];
-type WayMeta = components["schemas"]["WayMeta"];
+type EdgeMeta = components["schemas"]["EdgeMeta"];
 
 // ── public event ─────────────────────────────────────────────────────────────
 
@@ -21,7 +21,7 @@ export const LOCATE_INFO_EVENT = "locate-info";
 export interface LocateInfo {
   location: Location;
   node?: NodeMeta;
-  way?: WayMeta;
+  way?: EdgeMeta;
 }
 
 // ── modes ─────────────────────────────────────────────────────────────────────
@@ -153,7 +153,7 @@ export class SnapControl implements IControl {
       this._map.removeSource(PIN_SEGMENT_SOURCE);
   }
 
-  private _setSegment(sourceId: string, way: WayMeta | null) {
+  private _setSegment(sourceId: string, way: EdgeMeta | null) {
     const src = this._map?.getSource(sourceId) as GeoJSONSource | undefined;
     if (!src) return;
     if (!way) {
@@ -279,7 +279,7 @@ export class SnapControl implements IControl {
           this._applyPin({
             location: loc,
             node: loc.node_meta ?? undefined,
-            way: loc.way_meta ?? undefined,
+            way: loc.edge_meta ?? undefined,
           });
         }
       } catch {
@@ -317,7 +317,7 @@ export class SnapControl implements IControl {
       const info: LocateInfo = {
         location: loc,
         node: loc.node_meta ?? undefined,
-        way: loc.way_meta ?? undefined,
+        way: loc.edge_meta ?? undefined,
       };
       this._currentInfo = info;
 

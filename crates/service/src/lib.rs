@@ -18,19 +18,15 @@ pub mod virtual_graph;
 use crate::error::{Error, Result};
 use profile::{PROFILES, Profile};
 use router_storage::{
-    data::{node::Node, way::Way, way_extended::WayExtended},
+    data::{edge::Edge, node::Node, way::Way},
     spatial::SpatialIndex,
     tablefile::TableFile,
 };
 use speed_config::SpeedConfig;
 
-/// Options for creating a [`Service`].
 pub struct ServiceOptions {
-    /// Path to the storage directory (must contain `node_spatial.bin`, `edge_spatial.bin`, `nodes.bin`, `ways.bin`).
     pub storage_dir: PathBuf,
-    /// Maximum locate search radius in metres.
     pub max_radius_m: f32,
-    /// Per-country, per-profile speed overrides.
     pub speed_config: SpeedConfig,
 }
 
@@ -49,10 +45,10 @@ pub struct Service {
     pub(crate) node_spatial: SpatialIndex,
     pub(crate) edge_spatial: SpatialIndex,
     pub(crate) nodes: TableFile<Node>,
+    pub(crate) edges: TableFile<Edge>,
     pub(crate) ways: TableFile<Way>,
     pub(crate) max_radius_m: f32,
     pub(crate) speed_config: SpeedConfig,
-    pub(crate) way_extended: TableFile<WayExtended>,
 }
 
 impl Service {
@@ -60,25 +56,21 @@ impl Service {
         let node_spatial = SpatialIndex::open(options.storage_dir.join("node_spatial.bin"))?;
         let edge_spatial = SpatialIndex::open(options.storage_dir.join("edge_spatial.bin"))?;
         let nodes = TableFile::<Node>::open_read_only(options.storage_dir.join("nodes.bin"))?;
+        let edges = TableFile::<Edge>::open_read_only(options.storage_dir.join("edges.bin"))?;
         let ways = TableFile::<Way>::open_read_only(options.storage_dir.join("ways.bin"))?;
         nodes.header()?.verify()?;
+        edges.header()?.verify()?;
         ways.header()?.verify()?;
-
-        let speed_config = options.speed_config;
-
-        let way_extended =
-            TableFile::<WayExtended>::open_read_only(options.storage_dir.join("way_extended.bin"))?;
-        way_extended.header()?.verify()?;
 
         Ok(Self {
             profiles: PROFILES.to_vec(),
             node_spatial,
             edge_spatial,
             nodes,
+            edges,
             ways,
             max_radius_m: options.max_radius_m,
-            speed_config,
-            way_extended,
+            speed_config: options.speed_config,
         })
     }
 
@@ -106,10 +98,7 @@ impl Service {
             self.default_profile()
         }
     }
-}
 
-// Keep backward compatibility for `info` which uses profile names as strings.
-impl Service {
     pub(crate) fn profile_names(&self) -> impl Iterator<Item = &str> {
         self.profiles.iter().map(|p| p.name)
     }

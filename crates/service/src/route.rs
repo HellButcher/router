@@ -192,6 +192,7 @@ impl Service {
 
         let snapper = EdgeSnapper {
             nodes: &self.nodes,
+            edges: &self.edges,
             ways: &self.ways,
             edge_spatial: &self.edge_spatial,
         };
@@ -253,11 +254,11 @@ impl Service {
 
             let inner = RoadGraph {
                 nodes: &self.nodes,
+                edges: &self.edges,
                 ways: &self.ways,
                 cost_model: SpeedMap {
                     profile,
                     speed_config: &self.speed_config,
-                    way_extended: &self.way_extended,
                     avoid_toll: request.avoid_toll,
                     avoid_ferry: request.avoid_ferry,
                 },

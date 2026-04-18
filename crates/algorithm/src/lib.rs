@@ -4,14 +4,15 @@ pub mod bidir_dijkstra;
 pub mod convex_hull;
 pub mod dikstra;
 
+/// A neighbouring node reachable from the current position, with the cost to traverse to it.
 #[derive(Copy, Clone)]
-pub struct Edge {
+pub struct Neighbour {
     pub node: usize,
     pub cost: usize,
 }
 
 pub trait Graph {
-    type Iter<'a>: Iterator<Item = Edge>
+    type Iter<'a>: Iterator<Item = Neighbour>
     where
         Self: 'a;
 

@@ -1,10 +1,9 @@
 use router_storage::{
     data::{
         attrib::{HighwayClass, NodeFlags, WayFlags},
-        dim_restriction::DimRestriction,
+        edge::{Edge, EdgeFlags},
         node::Node,
         way::Way,
-        way_extended::WayExtended,
     },
     tablefile::TableFile,
 };
@@ -16,7 +15,11 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 
-fn is_zero(n: &u8) -> bool {
+fn is_zero_u8(n: &u8) -> bool {
+    *n == 0
+}
+
+fn is_zero_u16(n: &u16) -> bool {
     *n == 0
 }
 
@@ -26,7 +29,6 @@ fn is_zero(n: &u8) -> bool {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct NodeMeta {
-    /// OSM node ID.
     pub id: i64,
     pub lat: f32,
     pub lon: f32,
@@ -60,28 +62,27 @@ impl NodeMeta {
     }
 }
 
-// ── WayMeta ───────────────────────────────────────────────────────────────────
+// ── EdgeMeta ──────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-pub struct WayMeta {
+pub struct EdgeMeta {
     /// OSM way ID.
     pub id: i64,
-    /// Highway classification (e.g. `"Residential"`, `"Primary"`).
     pub highway: String,
-    /// Explicit max speed in km/h; 0 means use highway-class default.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_zero"))]
+    /// Max speed from OSM tag in km/h; 0 means use highway-class default.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_zero_u8"))]
     pub max_speed: u8,
-    /// Surface quality tier (e.g. `"Excellent"`, `"Good"`, `"Bad"`).
     pub surface_quality: String,
     /// ISO 3166-1 alpha-2 country code, or `null` if unknown.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub country_id: Option<String>,
-    /// Haversine distance between the two endpoint nodes in metres.
+    /// Length of the representative edge segment in metres.
     pub dist_m: u16,
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
     pub oneway: bool,
+    /// Per-direction access flags (from the representative edge).
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
     pub no_motor: bool,
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
@@ -98,56 +99,46 @@ pub struct WayMeta {
     pub bridge: bool,
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
     pub ferry: bool,
-    /// Max height in decimetres (0.1 m); 0 = no restriction.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_zero"))]
-    pub max_height_dm: u8,
-    /// Max width in decimetres (0.1 m); 0 = no restriction.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_zero"))]
-    pub max_width_dm: u8,
-    /// Max weight in units of 250 kg; 0 = no restriction.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_zero"))]
-    pub max_weight_250kg: u8,
+    /// Maximum height clearance in centimetres; 0 = no restriction.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_zero_u16"))]
+    pub max_height_cm: u16,
+    /// Maximum width clearance in centimetres; 0 = no restriction.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_zero_u16"))]
+    pub max_width_cm: u16,
+    /// Maximum allowed weight in kilograms; 0 = no restriction.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_zero_u16"))]
+    pub max_weight_kg: u16,
     pub from_node: NodeMeta,
     pub to_node: NodeMeta,
 }
 
-impl WayMeta {
-    pub fn from(
-        way: &Way,
-        nodes: &TableFile<Node>,
-        way_extended: &TableFile<WayExtended>,
-    ) -> std::io::Result<Self> {
-        let from_node = nodes.get(way.from_node_idx as usize)?;
-        let to_node = nodes.get(way.to_node_idx as usize)?;
-        let dim = if way.flags.contains(WayFlags::HAS_EXTENDED) {
-            way_extended
-                .find(&way.id)
-                .ok()
-                .flatten()
-                .map(|(_, e)| e.dim)
-                .unwrap_or(DimRestriction::NONE)
-        } else {
-            DimRestriction::NONE
-        };
+impl EdgeMeta {
+    /// Build `EdgeMeta` from a representative `edge` and its parent `way`.
+    ///
+    /// `edge` should be `edges.get(way.first_edge_idx)`.
+    pub fn from(edge: &Edge, way: &Way, nodes: &TableFile<Node>) -> std::io::Result<Self> {
+        let from_node = nodes.get(edge.from_node_idx as usize)?;
+        let to_node = nodes.get(edge.to_node_idx as usize)?;
         Ok(Self {
             id: way.id.0,
             highway: format!("{:?}", way.highway),
             max_speed: way.max_speed,
             surface_quality: format!("{:?}", way.surface_quality),
-            country_id: way.country_id.to_iso2().map(str::to_owned),
-            dist_m: way.dist_m,
+            country_id: edge.country_id.to_iso2().map(str::to_owned),
+            dist_m: edge.dist_m,
             oneway: way.flags.contains(WayFlags::ONEWAY),
-            no_motor: way.flags.contains(WayFlags::NO_MOTOR),
-            no_hgv: way.flags.contains(WayFlags::NO_HGV),
-            no_bicycle: way.flags.contains(WayFlags::NO_BICYCLE),
-            no_foot: way.flags.contains(WayFlags::NO_FOOT),
+            no_motor: edge.flags.contains(EdgeFlags::NO_MOTOR),
+            no_hgv: edge.flags.contains(EdgeFlags::NO_HGV),
+            no_bicycle: edge.flags.contains(EdgeFlags::NO_BICYCLE),
+            no_foot: edge.flags.contains(EdgeFlags::NO_FOOT),
             toll: way.flags.contains(WayFlags::TOLL),
             tunnel: way.flags.contains(WayFlags::TUNNEL),
             bridge: way.flags.contains(WayFlags::BRIDGE),
             ferry: way.highway == HighwayClass::Ferry,
-            max_height_dm: dim.max_height_dm,
-            max_width_dm: dim.max_width_dm,
-            max_weight_250kg: dim.max_weight_250kg,
+            // Convert internal units to human-readable: dm → cm (×10), 250 kg units → kg (×250)
+            max_height_cm: way.dim.max_height_dm as u16 * 10,
+            max_width_cm: way.dim.max_width_dm as u16 * 10,
+            max_weight_kg: way.dim.max_weight_250kg as u16 * 250,
             from_node: NodeMeta::from(&from_node),
             to_node: NodeMeta::from(&to_node),
         })

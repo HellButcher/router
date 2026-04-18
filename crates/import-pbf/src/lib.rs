@@ -10,16 +10,16 @@ use router_storage::{
     data::{
         attrib::{HighwayClass, NodeFlags, SurfaceQuality, WayFlags},
         dim_restriction::DimRestriction,
-        link_nodes_and_ways,
+        edge::{Edge, EdgeFlags},
+        link_nodes_and_edges,
         node::{Node, NodeId},
-        way::{Way, WayId},
-        way_extended::WayExtended,
+        way::{NO_EDGE, Way, WayId},
     },
     spatial::SpatialIndexBuilder,
     spatial::haversine_m,
     tablefile::TableFile,
 };
-use router_types::coordinate::LatLon;
+use router_types::{coordinate::LatLon, country::CountryId};
 use std::{
     collections::HashMap,
     fs::File,
@@ -193,20 +193,16 @@ impl<R: io::BufRead + Send> Importer<R> {
         }
     }
 
-    /// Set the output directory for the imported data files.
     pub fn with_target_dir(mut self, dir: PathBuf) -> Self {
         self.target_dir = dir;
         self
     }
 
-    /// Set the path to a GeoJSON file with country boundary polygons.
-    /// If not set, country lookup is skipped and `country_id` is left as unknown.
     pub fn with_country_boundaries(mut self, path: PathBuf) -> Self {
         self.country_boundaries = Some(path);
         self
     }
 
-    /// Set named maxspeed overrides (merged over built-in defaults).
     pub fn with_maxspeed(mut self, overrides: HashMap<String, u8>) -> Self {
         self.maxspeed = overrides;
         self
@@ -217,7 +213,6 @@ impl<R: io::BufRead + Send> Importer<R> {
         let _ = std::fs::create_dir_all(&self.target_dir);
 
         let blobs = Blobs::from_buf_read(self.read)?;
-        // validate header
         let header = blobs.header();
         tracing::info!("PBF required features: {:?}", header.required_features());
         tracing::info!("PBF optional features: {:?}", header.optional_features());
@@ -236,7 +231,6 @@ impl<R: io::BufRead + Send> Importer<R> {
             }
         }
 
-        // Build merged maxspeed map: built-ins overridden by config values.
         let maxspeed_map: HashMap<String, u8> = BUILTIN_MAXSPEED
             .iter()
             .map(|(k, v)| (k.to_string(), *v))
@@ -245,15 +239,14 @@ impl<R: io::BufRead + Send> Importer<R> {
 
         let mut nodes = TableFile::<Node>::open_override(self.target_dir.join("nodes.bin"))
             .map_err(Error::WriteError)?;
+        let mut edges = TableFile::<Edge>::open_override(self.target_dir.join("edges.bin"))
+            .map_err(Error::WriteError)?;
         let mut ways = TableFile::<Way>::open_override(self.target_dir.join("ways.bin"))
             .map_err(Error::WriteError)?;
-        let mut way_extended =
-            TableFile::<WayExtended>::open_override(self.target_dir.join("way_extended.bin"))
-                .map_err(Error::WriteError)?;
 
         let mut nodes_append = nodes.appender().map_err(Error::WriteError)?.spawn();
+        let mut edges_append = edges.appender().map_err(Error::WriteError)?.spawn();
         let mut ways_append = ways.appender().map_err(Error::WriteError)?.spawn();
-        let mut way_extended_append = way_extended.appender().map_err(Error::WriteError)?.spawn();
 
         let _span = tracing::info_span!("import").entered();
         let _span = tracing::info_span!("parse_blobs").entered();
@@ -262,18 +255,18 @@ impl<R: io::BufRead + Send> Importer<R> {
             .map(|b| {
                 (
                     nodes_append.start(),
+                    edges_append.start(),
                     ways_append.start(),
-                    way_extended_append.start(),
                     b,
                 )
             })
             .par_bridge()
             .try_for_each(
-                |(nodes_appender, ways_appender, extended_appender, blob)| -> Result<()> {
+                |(nodes_appender, edges_appender, ways_appender, blob)| -> Result<()> {
                     let data = blob?.into_decoded()?;
-                    let mut nodes = Vec::new();
-                    let mut ways = Vec::new();
-                    let mut extended = Vec::new();
+                    let mut out_nodes = Vec::new();
+                    let mut out_edges = Vec::new();
+                    let mut out_ways = Vec::new();
                     let mut old_id = i64::MIN;
                     for group in data.iter_groups() {
                         for n in group.iter_nodes() {
@@ -282,12 +275,10 @@ impl<R: io::BufRead + Send> Importer<R> {
                             old_id = id.0;
                             let pos = LatLon(n.lat_deg() as f32, n.lon_deg() as f32);
                             let mut node_tags = NodeTags::default();
-                            n.tags().iter().for_each(|(k, v)| {
-                                node_tags.set_tag(k, v);
-                            });
+                            n.tags().iter().for_each(|(k, v)| { node_tags.set_tag(k, v); });
                             let mut node = Node::new(id, pos);
                             node.flags = derive_node_flags(&node_tags);
-                            nodes.push(node);
+                            out_nodes.push(node);
                         }
                         for n in group.iter_dense_nodes() {
                             let id = NodeId(n.id());
@@ -295,12 +286,10 @@ impl<R: io::BufRead + Send> Importer<R> {
                             old_id = id.0;
                             let pos = LatLon(n.lat_deg() as f32, n.lon_deg() as f32);
                             let mut node_tags = NodeTags::default();
-                            n.tags().iter().for_each(|(k, v)| {
-                                node_tags.set_tag(k, v);
-                            });
+                            n.tags().iter().for_each(|(k, v)| { node_tags.set_tag(k, v); });
                             let mut node = Node::new(id, pos);
                             node.flags = derive_node_flags(&node_tags);
-                            nodes.push(node);
+                            out_nodes.push(node);
                         }
                         for w in group.iter_ways() {
                             let id = w.id();
@@ -308,9 +297,7 @@ impl<R: io::BufRead + Send> Importer<R> {
                             old_id = id;
                             let id = WayId(id);
                             let mut way_tags = WayTags::default();
-                            w.tags().iter().for_each(|(k, v)| {
-                                way_tags.set_tag(k, v);
-                            });
+                            w.tags().iter().for_each(|(k, v)| { way_tags.set_tag(k, v); });
                             if way_tags.is_excluded() {
                                 continue;
                             }
@@ -319,13 +306,10 @@ impl<R: io::BufRead + Send> Importer<R> {
                             } else {
                                 highway_class(way_tags.highway)
                             };
-                            let dim = dim_restriction_from_tags(&way_tags);
-                            let mut flags = way_flags(&way_tags);
-                            if !dim.is_none() {
-                                flags |= WayFlags::HAS_EXTENDED;
-                                extended.push(WayExtended::new(id, dim));
-                            }
                             let surface_quality = surface_quality(&way_tags);
+                            let dim = dim_restriction_from_tags(&way_tags);
+                            let way_flags = derive_way_flags(&way_tags);
+                            let edge_flags = derive_edge_flags(&way_tags, highway);
                             let max_speed = way_tags
                                 .raw_max_speed
                                 .and_then(|v| tags::parse_max_speed(v, &maxspeed_map))
@@ -338,8 +322,22 @@ impl<R: io::BufRead + Send> Importer<R> {
                                 .raw_max_speed_backward
                                 .and_then(|v| tags::parse_max_speed(v, &maxspeed_map))
                                 .unwrap_or(max_speed);
-                            let is_oneway = flags.contains(WayFlags::ONEWAY);
+                            let is_oneway = way_flags.contains(WayFlags::ONEWAY);
                             let is_reverse = is_oneway_reverse(&way_tags);
+                            let bicycle_contraflow = is_bicycle_contraflow(&way_tags);
+
+                            // One Way entry per OSM way (deduplicated within blob).
+                            // max_speed on Way is the base (bidirectional default);
+                            // directional overrides live on each Edge.
+                            let mut way = Way::new(id);
+                            way.highway = highway;
+                            way.flags = way_flags;
+                            way.max_speed = max_speed;
+                            way.surface_quality = surface_quality;
+                            way.dim = dim;
+                            out_ways.push(way);
+
+                            // One Edge per directed segment.
                             let mut refs = w.refs();
                             if let Some(mut current) = refs.next() {
                                 for next in refs {
@@ -348,40 +346,41 @@ impl<R: io::BufRead + Send> Importer<R> {
                                     } else {
                                         (NodeId(current), NodeId(next))
                                     };
-                                    let bicycle_contraflow = is_bicycle_contraflow(&way_tags);
 
-                                    let mut way = Way::new(id, a.0 as u64, b.0 as u64);
-                                    way.highway = highway;
-                                    way.flags = flags;
-                                    way.max_speed = max_speed_forward;
-                                    way.surface_quality = surface_quality;
-                                    ways.push(way);
+                                    out_edges.push(Edge::new(
+                                        a.0 as u64,
+                                        b.0 as u64,
+                                        id.0,
+                                        edge_flags,
+                                        max_speed_forward,
+                                    ));
 
                                     if !is_oneway && !is_reverse {
-                                        let mut rev = Way::new(id, b.0 as u64, a.0 as u64);
-                                        rev.highway = highway;
-                                        rev.flags = flags;
-                                        rev.max_speed = max_speed_backward;
-                                        rev.surface_quality = surface_quality;
-                                        ways.push(rev);
+                                        out_edges.push(Edge::new(
+                                            b.0 as u64,
+                                            a.0 as u64,
+                                            id.0,
+                                            edge_flags,
+                                            max_speed_backward,
+                                        ));
                                     } else if is_oneway && bicycle_contraflow {
-                                        let mut rev = Way::new(id, b.0 as u64, a.0 as u64);
-                                        rev.highway = highway;
-                                        let mut rev_flags = flags & !WayFlags::ONEWAY;
-                                        rev_flags |= WayFlags::NO_MOTOR | WayFlags::NO_HGV;
-                                        rev.flags = rev_flags;
-                                        rev.max_speed = max_speed_backward;
-                                        rev.surface_quality = surface_quality;
-                                        ways.push(rev);
+                                        out_edges.push(Edge::new(
+                                            b.0 as u64,
+                                            a.0 as u64,
+                                            id.0,
+                                            EdgeFlags::NO_MOTOR | EdgeFlags::NO_HGV,
+                                            max_speed_backward,
+                                        ));
                                     }
+
                                     current = next;
                                 }
                             }
                         }
                     }
-                    nodes_appender.done(nodes);
-                    ways_appender.done(ways);
-                    extended_appender.done(extended);
+                    nodes_appender.done(out_nodes);
+                    edges_appender.done(out_edges);
+                    ways_appender.done(out_ways);
                     Ok(())
                 },
             )?;
@@ -389,36 +388,34 @@ impl<R: io::BufRead + Send> Importer<R> {
         nodes_append
             .join()
             .expect("the node-writer thread has panicked");
-
+        edges_append
+            .join()
+            .expect("the edge-writer thread has panicked");
         ways_append
             .join()
             .expect("the way-writer thread has panicked");
 
-        way_extended_append
-            .join()
-            .expect("the way-extended-writer thread has panicked");
-
         tracing::info!(
             nodes = nodes.len(),
+            edges = edges.len(),
             ways = ways.len(),
-            extended = way_extended.len(),
-            "written nodes and ways"
+            "written nodes, edges, and ways"
         );
         drop(_span);
 
         {
-            let _span = tracing::info_span!("link_nodes_and_ways").entered();
+            let _span = tracing::info_span!("link_nodes_and_edges").entered();
             let nodes_slice = nodes.get_all().map_err(Error::WriteError)?;
-            let ways_slice = ways.get_all().map_err(Error::WriteError)?;
+            let edges_slice = edges.get_all().map_err(Error::WriteError)?;
             let nodes_slice: &[Node] = &nodes_slice;
-            let ways_slice: &[Way] = &ways_slice;
+            let edges_slice: &[Edge] = &edges_slice;
             tracing::info!(
                 nodes = nodes_slice.len(),
-                ways = ways_slice.len(),
+                edges = edges_slice.len(),
                 "linking"
             );
-            ways_slice.par_iter().enumerate().for_each(|(i, way)| {
-                link_nodes_and_ways(nodes_slice, i, way);
+            edges_slice.par_iter().enumerate().for_each(|(i, edge)| {
+                link_nodes_and_edges(nodes_slice, i, edge);
             });
         }
 
@@ -428,10 +425,9 @@ impl<R: io::BufRead + Send> Importer<R> {
             nodes
                 .filter(Node::is_connected)
                 .map_err(Error::WriteError)?;
-            tracing::info!(nodes = nodes.len(), ways = ways.len(), "filtered");
+            tracing::info!(nodes = nodes.len(), "filtered");
         }
 
-        // Build country lookup once (may be skipped if no boundaries file configured).
         let country_lookup = match &self.country_boundaries {
             Some(path) => {
                 tracing::info!("loading country boundaries from {:?}", path);
@@ -439,25 +435,27 @@ impl<R: io::BufRead + Send> Importer<R> {
             }
             None => {
                 tracing::warn!(
-                    "no country_boundaries configured — country_id will be unknown for all ways"
+                    "no country_boundaries configured — country_id will be unknown for all edges"
                 );
                 None
             }
         };
 
-        // Resolve from_node_idx / to_node_idx and fill in country_id.
-        tracing::info!("resolving node indices");
+        // Phase 4a: resolve node indices, dist_m, country_id, and way_idx on each edge.
+        tracing::info!("resolving edge data");
         {
-            let _span = tracing::info_span!("resolve_node_indices").entered();
+            let _span = tracing::info_span!("resolve_edges").entered();
             let nodes_slice = nodes.get_all().map_err(Error::WriteError)?;
             let nodes_slice: &[Node] = &nodes_slice;
-            let ways_slice = ways.get_all_mut().map_err(Error::WriteError)?;
+            let ways_slice = ways.get_all().map_err(Error::WriteError)?;
+            let ways_slice: &[Way] = &ways_slice;
+            let edges_slice = edges.get_all_mut().map_err(Error::WriteError)?;
 
-            ways_slice
+            edges_slice
                 .par_iter_mut()
-                .try_for_each(|way| -> Result<()> {
-                    let from_id = NodeId(way.from_node_idx as i64);
-                    let to_id = NodeId(way.to_node_idx as i64);
+                .try_for_each(|edge| -> Result<()> {
+                    let from_id = NodeId(edge.from_node_idx as i64);
+                    let to_id = NodeId(edge.to_node_idx as i64);
                     let from_idx = nodes_slice
                         .binary_search_by_key(&from_id, |n| n.id)
                         .map_err(|_| Error::NodeIdNotFound(from_id))?;
@@ -467,30 +465,52 @@ impl<R: io::BufRead + Send> Importer<R> {
                     let from_pos = nodes_slice[from_idx].pos;
                     let to_pos = nodes_slice[to_idx].pos;
 
-                    way.from_node_idx = from_idx as u64;
-                    way.to_node_idx = to_idx as u64;
+                    edge.from_node_idx = from_idx as u64;
+                    edge.to_node_idx = to_idx as u64;
 
-                    way.dist_m = haversine_m(from_pos.lat, from_pos.lon, to_pos.lat, to_pos.lon)
-                        .min(u16::MAX as f32) as u16;
+                    let dist_m =
+                        haversine_m(from_pos.lat, from_pos.lon, to_pos.lat, to_pos.lon)
+                            .min(u16::MAX as f32) as u16;
 
-                    if let Some(lookup) = &country_lookup {
-                        way.country_id = lookup.lookup(from_pos.lat, from_pos.lon);
-                    }
+                    let country_id = country_lookup
+                        .as_ref()
+                        .map(|l| l.lookup(from_pos.lat, from_pos.lon))
+                        .unwrap_or(CountryId::UNKNOWN);
 
+                    let way_id = WayId(edge.way_id_raw());
+                    let way_idx = ways_slice
+                        .binary_search_by_key(&way_id, |w| w.id)
+                        .map_err(|_| Error::WayIdNotFound(way_id))?;
+
+                    edge.resolve(way_idx, dist_m, country_id);
                     Ok(())
                 })?;
         }
 
-        tracing::info!("flush nodes and ways");
+        // Phase 4b: fill first_edge_idx on each Way (sequential — first edge wins).
+        tracing::info!("filling way first-edge indices");
+        {
+            let edges_slice = edges.get_all().map_err(Error::WriteError)?;
+            let ways_slice = ways.get_all_mut().map_err(Error::WriteError)?;
+            for (edge_idx, edge) in edges_slice.iter().enumerate() {
+                let way = &mut ways_slice[edge.way_idx()];
+                if way.first_edge_idx == NO_EDGE {
+                    way.first_edge_idx = edge_idx as u64;
+                }
+            }
+        }
+
+        tracing::info!("flushing nodes, edges, and ways");
         nodes.flush().map_err(Error::WriteError)?;
+        edges.flush().map_err(Error::WriteError)?;
         ways.flush().map_err(Error::WriteError)?;
 
         tracing::info!("building spatial indices");
         {
             let nodes_ref = nodes.get_all().map_err(Error::WriteError)?;
-            let ways_ref = ways.get_all().map_err(Error::WriteError)?;
+            let edges_ref = edges.get_all().map_err(Error::WriteError)?;
             let nodes_s: &[Node] = &nodes_ref;
-            let ways_s: &[Way] = &ways_ref;
+            let edges_s: &[Edge] = &edges_ref;
 
             {
                 let _span = tracing::info_span!("build_node_spatial_index").entered();
@@ -510,10 +530,10 @@ impl<R: io::BufRead + Send> Importer<R> {
                 let _span = tracing::info_span!("build_edge_spatial_index").entered();
                 SpatialIndexBuilder::new()
                     .build(
-                        ways_s.len(),
+                        edges_s.len(),
                         |i| {
-                            let from = nodes_s[ways_s[i].from_node_idx as usize].pos;
-                            let to = nodes_s[ways_s[i].to_node_idx as usize].pos;
+                            let from = nodes_s[edges_s[i].from_node_idx as usize].pos;
+                            let to = nodes_s[edges_s[i].to_node_idx as usize].pos;
                             (
                                 from.lat.min(to.lat),
                                 from.lon.min(to.lon),
@@ -528,7 +548,6 @@ impl<R: io::BufRead + Send> Importer<R> {
         }
 
         tracing::info!("flushed");
-
         Ok(())
     }
 }
@@ -566,11 +585,10 @@ fn is_oneway_reverse(tags: &tags::WayTags<'_>) -> bool {
     matches!(&tags.oneway, Conditional::Simple(OneWay::reverse))
 }
 
-fn way_flags(tags: &tags::WayTags<'_>) -> WayFlags {
-    use tags::{Conditional, Highway, OneWay};
+/// WayFlags for metadata shared across all edges of the same OSM way.
+fn derive_way_flags(tags: &tags::WayTags<'_>) -> WayFlags {
+    use tags::{Conditional, OneWay};
     let mut flags = WayFlags::empty();
-
-    // Oneway from explicit tag or junction type implying circulation direction.
     if matches!(
         &tags.oneway,
         Conditional::Simple(OneWay::yes | OneWay::reverse)
@@ -578,92 +596,6 @@ fn way_flags(tags: &tags::WayTags<'_>) -> WayFlags {
     {
         flags |= WayFlags::ONEWAY;
     }
-
-    // Access restrictions derived from highway class.
-    match tags.highway {
-        Some(Highway::footway)
-        | Some(Highway::pedestrian)
-        | Some(Highway::cycleway)
-        | Some(Highway::path) => {
-            flags |= WayFlags::NO_MOTOR;
-            flags |= WayFlags::NO_HGV;
-        }
-        Some(Highway::bridleway) => {
-            flags |= WayFlags::NO_MOTOR;
-            flags |= WayFlags::NO_HGV;
-            flags |= WayFlags::NO_BICYCLE;
-        }
-        Some(Highway::motorway) | Some(Highway::motorway_link) => {
-            flags |= WayFlags::NO_BICYCLE;
-            flags |= WayFlags::NO_FOOT;
-        }
-        _ => {}
-    }
-
-    // motorroad=yes has the same access restrictions as a motorway.
-    if tags.motorroad {
-        flags |= WayFlags::NO_BICYCLE;
-        flags |= WayFlags::NO_FOOT;
-    }
-
-    // Mode-specific access tags (e.g. motorcar=no, bicycle=yes on access=no road).
-    // Pass 1 — exclusions: set restriction flags (default mode blocks everything).
-    // Pass 2 — inclusions: clear restriction flags re-opened by explicit mode tags.
-    use tags::{Conditional as Cond, Mode};
-    // Simple access=no/private/etc. blocks all modes.
-    if let Cond::Simple(a) = &tags.access
-        && a.is_excluded()
-    {
-        flags |= WayFlags::NO_MOTOR | WayFlags::NO_HGV | WayFlags::NO_BICYCLE | WayFlags::NO_FOOT;
-    }
-    if let Cond::Multi(items) = &tags.access {
-        for item in items.iter().filter(|i| i.value.is_excluded()) {
-            match item.mode {
-                Mode::default => {
-                    flags |= WayFlags::NO_MOTOR
-                        | WayFlags::NO_HGV
-                        | WayFlags::NO_BICYCLE
-                        | WayFlags::NO_FOOT;
-                }
-                Mode::vehicle => {
-                    flags |= WayFlags::NO_MOTOR | WayFlags::NO_HGV | WayFlags::NO_BICYCLE;
-                }
-                Mode::motor_vehicle => {
-                    flags |= WayFlags::NO_MOTOR | WayFlags::NO_HGV;
-                }
-                Mode::motorcar | Mode::motorcycle | Mode::moped | Mode::mofa | Mode::motorhome => {
-                    flags |= WayFlags::NO_MOTOR;
-                }
-                Mode::hgv | Mode::goods | Mode::coach | Mode::tourist_bus => {
-                    flags |= WayFlags::NO_HGV;
-                }
-                Mode::bicycle => flags |= WayFlags::NO_BICYCLE,
-                Mode::foot => flags |= WayFlags::NO_FOOT,
-                _ => {}
-            }
-        }
-        for item in items.iter().filter(|i| !i.value.is_excluded()) {
-            match item.mode {
-                Mode::vehicle => {
-                    flags &= !(WayFlags::NO_MOTOR | WayFlags::NO_HGV | WayFlags::NO_BICYCLE);
-                }
-                Mode::motor_vehicle => {
-                    flags &= !(WayFlags::NO_MOTOR | WayFlags::NO_HGV);
-                }
-                Mode::motorcar | Mode::motorcycle | Mode::moped | Mode::mofa | Mode::motorhome => {
-                    flags &= !WayFlags::NO_MOTOR;
-                }
-                Mode::hgv | Mode::goods | Mode::coach | Mode::tourist_bus => {
-                    flags &= !WayFlags::NO_HGV;
-                }
-                Mode::bicycle => flags &= !WayFlags::NO_BICYCLE,
-                Mode::foot => flags &= !WayFlags::NO_FOOT,
-                _ => {}
-            }
-        }
-    }
-
-    // Toll, tunnel, bridge.
     if tags.toll == Some(true) {
         flags |= WayFlags::TOLL;
     }
@@ -673,21 +605,101 @@ fn way_flags(tags: &tags::WayTags<'_>) -> WayFlags {
     if tags.bridge {
         flags |= WayFlags::BRIDGE;
     }
+    flags
+}
+
+/// Per-direction access restrictions for edges, derived from highway class and access tags.
+fn derive_edge_flags(tags: &tags::WayTags<'_>, highway: HighwayClass) -> EdgeFlags {
+    let mut flags = EdgeFlags::empty();
+
+    // Restrictions implied by highway classification.
+    match highway {
+        HighwayClass::Footway
+        | HighwayClass::Pedestrian
+        | HighwayClass::Cycleway
+        | HighwayClass::Path => {
+            flags |= EdgeFlags::NO_MOTOR | EdgeFlags::NO_HGV;
+        }
+        HighwayClass::Bridleway => {
+            flags |= EdgeFlags::NO_MOTOR | EdgeFlags::NO_HGV | EdgeFlags::NO_BICYCLE;
+        }
+        HighwayClass::Motorway | HighwayClass::MotorwayLink => {
+            flags |= EdgeFlags::NO_BICYCLE | EdgeFlags::NO_FOOT;
+        }
+        _ => {}
+    }
+
+    if tags.motorroad {
+        flags |= EdgeFlags::NO_BICYCLE | EdgeFlags::NO_FOOT;
+    }
+
+    // Mode-specific access tags.
+    use tags::{Conditional as Cond, Mode};
+    if let Cond::Simple(a) = &tags.access
+        && a.is_excluded()
+    {
+        flags |= EdgeFlags::NO_MOTOR
+            | EdgeFlags::NO_HGV
+            | EdgeFlags::NO_BICYCLE
+            | EdgeFlags::NO_FOOT;
+    }
+    if let Cond::Multi(items) = &tags.access {
+        for item in items.iter().filter(|i| i.value.is_excluded()) {
+            match item.mode {
+                Mode::default => {
+                    flags |= EdgeFlags::NO_MOTOR
+                        | EdgeFlags::NO_HGV
+                        | EdgeFlags::NO_BICYCLE
+                        | EdgeFlags::NO_FOOT;
+                }
+                Mode::vehicle => {
+                    flags |= EdgeFlags::NO_MOTOR | EdgeFlags::NO_HGV | EdgeFlags::NO_BICYCLE;
+                }
+                Mode::motor_vehicle => {
+                    flags |= EdgeFlags::NO_MOTOR | EdgeFlags::NO_HGV;
+                }
+                Mode::motorcar | Mode::motorcycle | Mode::moped | Mode::mofa | Mode::motorhome => {
+                    flags |= EdgeFlags::NO_MOTOR;
+                }
+                Mode::hgv | Mode::goods | Mode::coach | Mode::tourist_bus => {
+                    flags |= EdgeFlags::NO_HGV;
+                }
+                Mode::bicycle => flags |= EdgeFlags::NO_BICYCLE,
+                Mode::foot => flags |= EdgeFlags::NO_FOOT,
+                _ => {}
+            }
+        }
+        for item in items.iter().filter(|i| !i.value.is_excluded()) {
+            match item.mode {
+                Mode::vehicle => {
+                    flags &= !(EdgeFlags::NO_MOTOR | EdgeFlags::NO_HGV | EdgeFlags::NO_BICYCLE);
+                }
+                Mode::motor_vehicle => {
+                    flags &= !(EdgeFlags::NO_MOTOR | EdgeFlags::NO_HGV);
+                }
+                Mode::motorcar | Mode::motorcycle | Mode::moped | Mode::mofa | Mode::motorhome => {
+                    flags &= !EdgeFlags::NO_MOTOR;
+                }
+                Mode::hgv | Mode::goods | Mode::coach | Mode::tourist_bus => {
+                    flags &= !EdgeFlags::NO_HGV;
+                }
+                Mode::bicycle => flags &= !EdgeFlags::NO_BICYCLE,
+                Mode::foot => flags &= !EdgeFlags::NO_FOOT,
+                _ => {}
+            }
+        }
+    }
 
     flags
 }
 
-/// Derive `NodeFlags` from parsed node tags.
 fn derive_node_flags(tags: &tags::NodeTags<'_>) -> NodeFlags {
     use tags::{Barrier, Conditional as Cond, Mode, NodeHighway};
     let mut flags = NodeFlags::empty();
 
     if let Some(barrier) = tags.barrier {
         match barrier {
-            Barrier::bollard => {
-                flags |= NodeFlags::NO_MOTOR | NodeFlags::NO_HGV;
-            }
-            Barrier::gate => {
+            Barrier::bollard | Barrier::gate => {
                 flags |= NodeFlags::NO_MOTOR | NodeFlags::NO_HGV;
             }
             Barrier::kissing_gate => {

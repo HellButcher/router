@@ -1,28 +1,19 @@
 use bitflags::bitflags;
 
 bitflags! {
-    /// Access and direction restrictions encoded per-way.
+    /// Way-level flags (shared across all edges of an OSM way).
+    /// Per-direction vehicle access restrictions live in [`EdgeFlags`] on each edge.
     #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
     #[repr(transparent)]
-    pub struct WayFlags: u16 {
+    pub struct WayFlags: u8 {
         /// Way is only traversable from → to (forward direction).
-        const ONEWAY         = 0x0001;
+        const ONEWAY = 0x01;
         /// Toll road — passing this way incurs a toll charge.
-        const TOLL           = 0x0002;
-        /// Motor vehicles not allowed.
-        const NO_MOTOR       = 0x0004;
-        /// HGV (heavy goods vehicles) not allowed.
-        const NO_HGV         = 0x0008;
-        /// Bicycles not allowed.
-        const NO_BICYCLE     = 0x0010;
-        /// Pedestrians not allowed.
-        const NO_FOOT        = 0x0020;
+        const TOLL   = 0x02;
         /// Way passes through a tunnel.
-        const TUNNEL         = 0x0040;
+        const TUNNEL = 0x04;
         /// Way is on a bridge.
-        const BRIDGE         = 0x0080;
-        /// Way has an entry in the extended-attributes table (`way_extended.bin`).
-        const HAS_EXTENDED   = 0x0100;
+        const BRIDGE = 0x08;
     }
 }
 

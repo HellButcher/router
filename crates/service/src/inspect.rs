@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{Error, Result},
-    meta::{NodeMeta, WayMeta},
+    meta::{EdgeMeta, NodeMeta},
 };
 
 use super::Service;
@@ -36,7 +36,7 @@ pub struct InspectResponse {
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub node: Option<NodeMeta>,
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-    pub way: Option<WayMeta>,
+    pub way: Option<EdgeMeta>,
 }
 
 // ── service impl ──────────────────────────────────────────────────────────────
@@ -49,21 +49,20 @@ impl Service {
                 let node = result
                     .map(|(_, n)| NodeMeta::from(&n))
                     .ok_or_else(|| Error::InvalidRequest(format!("node {id} not found")))?;
-                Ok(InspectResponse {
-                    node: Some(node),
-                    way: None,
-                })
+                Ok(InspectResponse { node: Some(node), way: None })
             }
             (None, Some(id)) => {
                 let result = self.ways.find(&WayId(id))?;
-                let way = result
-                    .map(|(_, w)| WayMeta::from(&w, &self.nodes, &self.way_extended))
-                    .ok_or_else(|| Error::InvalidRequest(format!("way {id} not found")))?
+                let (_, way) = result
+                    .ok_or_else(|| Error::InvalidRequest(format!("way {id} not found")))?;
+                // Retrieve the representative edge via first_edge_idx.
+                let edge = self
+                    .edges
+                    .get(way.first_edge_idx as usize)
                     .map_err(Error::StorageError)?;
-                Ok(InspectResponse {
-                    node: None,
-                    way: Some(way),
-                })
+                let meta = EdgeMeta::from(&edge, &way, &self.nodes)
+                    .map_err(Error::StorageError)?;
+                Ok(InspectResponse { node: None, way: Some(meta) })
             }
             _ => Err(Error::InvalidRequest(
                 "exactly one of node_id or way_id must be set".into(),

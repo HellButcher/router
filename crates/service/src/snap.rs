@@ -1,19 +1,17 @@
 use router_storage::{
-    data::{node::Node, way::Way},
+    data::{edge::Edge, node::Node, way::Way},
     spatial::SpatialIndex,
     tablefile::TableFile,
 };
 use router_types::coordinate::LatLon;
 
 use crate::{
-    graph::{haversine_m, way_is_blocked},
+    graph::{edge_is_blocked, haversine_m},
     profile::VehicleType,
 };
 
 // ── Snap ──────────────────────────────────────────────────────────────────────
 
-/// Result of snapping a waypoint coordinate — either to a node or to a point
-/// on a way segment.
 pub enum Snap {
     Node { node_idx: usize, pos: LatLon },
     Edge(EdgeSnap),
@@ -30,9 +28,9 @@ impl Snap {
 
 // ── EdgeSnap ──────────────────────────────────────────────────────────────────
 
-/// Result of snapping a point to the nearest way segment.
 pub struct EdgeSnap {
-    pub way_idx: usize,
+    /// Index into the edge table (`edges.bin`).
+    pub edge_idx: usize,
     /// OSM way ID for use in responses.
     pub way_id: u64,
     pub pos: LatLon,
@@ -45,21 +43,14 @@ pub struct EdgeSnap {
 
 // ── Snapper ───────────────────────────────────────────────────────────────────
 
-/// Performs edge snapping against the storage layer.
-///
-/// Holds borrowed references so it can be constructed cheaply per-request.
 pub struct EdgeSnapper<'a> {
     pub nodes: &'a TableFile<Node>,
+    pub edges: &'a TableFile<Edge>,
     pub ways: &'a TableFile<Way>,
     pub edge_spatial: &'a SpatialIndex,
 }
 
 impl<'a> EdgeSnapper<'a> {
-    /// Snap `(lat, lon)` to the nearest point on any way segment within
-    /// `max_radius_m` metres.
-    ///
-    /// When `restrict_to` is `Some(vehicle)`, ways that are inaccessible for
-    /// that vehicle type are skipped.
     pub fn snap_to_edge(
         &self,
         lat: f32,
@@ -70,25 +61,30 @@ impl<'a> EdgeSnapper<'a> {
         let p = LatLon(lat, lon);
         self.edge_spatial
             .nearest_refined(lat, lon, max_radius_m, |entry, _bbox_dist| {
-                let way_idx = entry.index as usize;
-                let way = self.ways.get(way_idx).ok()?;
-                if restrict_to.is_some_and(|v| way_is_blocked(&way, v)) {
+                let edge_idx = entry.index as usize;
+                let edge = self.edges.get(edge_idx).ok()?;
+                if restrict_to.is_some_and(|v| edge_is_blocked(&edge, v)) {
                     return None;
                 }
-                let from = self.nodes.get(way.from_node_idx as usize).ok()?;
-                let to = self.nodes.get(way.to_node_idx as usize).ok()?;
+                let from = self.nodes.get(edge.from_node_idx as usize).ok()?;
+                let to = self.nodes.get(edge.to_node_idx as usize).ok()?;
                 let (snapped, fraction) = project_onto_segment(p, from.pos, to.pos);
                 let distance_m = haversine_m(p, snapped);
+                let way_id = self
+                    .ways
+                    .get(edge.way_idx())
+                    .map(|w| w.id.0 as u64)
+                    .unwrap_or(0);
                 Some((
                     distance_m,
                     EdgeSnap {
-                        way_idx,
-                        way_id: way.id.0 as u64,
+                        edge_idx,
+                        way_id,
                         pos: snapped,
                         fraction,
                         distance_m,
-                        from_node_idx: way.from_node_idx as usize,
-                        to_node_idx: way.to_node_idx as usize,
+                        from_node_idx: edge.from_node_idx as usize,
+                        to_node_idx: edge.to_node_idx as usize,
                     },
                 ))
             })
@@ -97,11 +93,6 @@ impl<'a> EdgeSnapper<'a> {
 
 // ── geometry ──────────────────────────────────────────────────────────────────
 
-/// Project point `p` onto segment `a → b`.
-///
-/// Returns `(projected_point, t)` where `t ∈ [0, 1]` is the fraction along
-/// the segment (0 = `a`, 1 = `b`).  Uses equirectangular projection scaled by
-/// `cos(mid_lat)` — accurate for segments up to a few hundred kilometres.
 pub fn project_onto_segment(p: LatLon, a: LatLon, b: LatLon) -> (LatLon, f32) {
     let cos_lat = (((a.lat + b.lat) * 0.5) as f64).to_radians().cos() as f32;
 

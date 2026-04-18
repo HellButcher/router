@@ -5,6 +5,7 @@ use rayon::prelude::*;
 use router_algorithm::dikstra::dijkstra_ssmt;
 use router_algorithm::reconstruct_path;
 use router_storage::data::attrib::WayFlags;
+use router_storage::data::edge::Edge;
 use router_storage::data::node::Node;
 use router_storage::data::way::Way;
 use router_storage::tablefile::TableFile;
@@ -118,6 +119,7 @@ impl Service {
 
         let snapper = EdgeSnapper {
             nodes: &self.nodes,
+            edges: &self.edges,
             ways: &self.ways,
             edge_spatial: &self.edge_spatial,
         };
@@ -174,7 +176,6 @@ impl Service {
         let speed_map = SpeedMap {
             profile,
             speed_config: &self.speed_config,
-            way_extended: &self.way_extended,
             avoid_toll: request.avoid_toll,
             avoid_ferry: request.avoid_ferry,
         };
@@ -187,6 +188,7 @@ impl Service {
                     &from_snaps,
                     &to_snaps,
                     &self.nodes,
+                    &self.edges,
                     &self.ways,
                     speed_map,
                 )
@@ -218,6 +220,7 @@ fn compute_origin<C: CostModel + Copy>(
     from_snaps: &[Snap],
     to_snaps: &[Snap],
     nodes: &TableFile<Node>,
+    edges: &TableFile<Edge>,
     ways: &TableFile<Way>,
     cost_model: C,
 ) -> Vec<(usize, MatrixResponseEntry)> {
@@ -239,6 +242,7 @@ fn compute_origin<C: CostModel + Copy>(
 
     let inner = RoadGraph {
         nodes,
+        edges,
         ways,
         cost_model,
         goal_pos: from_snap.pos(),
@@ -251,7 +255,7 @@ fn compute_origin<C: CostModel + Copy>(
     for &(pair_idx, to_idx) in dest_pairs {
         let to_snap = &to_snaps[to_idx];
 
-        let Some((cost_ms, end_node)) = destination_cost(to_snap, &time_costs, ways, cost_model)
+        let Some((cost_ms, end_node)) = destination_cost(to_snap, &time_costs, edges, ways, cost_model)
         else {
             continue; // unreachable — omit
         };
@@ -303,7 +307,7 @@ fn snaps_identical(a: &Snap, b: &Snap) -> bool {
     match (a, b) {
         (Snap::Node { node_idx: ai, .. }, Snap::Node { node_idx: bi, .. }) => ai == bi,
         (Snap::Edge(a), Snap::Edge(b)) => {
-            a.way_idx == b.way_idx && (a.fraction - b.fraction).abs() < f32::EPSILON
+            a.edge_idx == b.edge_idx && (a.fraction - b.fraction).abs() < f32::EPSILON
         }
         _ => false,
     }
@@ -315,23 +319,26 @@ fn snaps_identical(a: &Snap, b: &Snap) -> bool {
 fn destination_cost<C: CostModel>(
     to_snap: &Snap,
     time_costs: &HashMap<usize, usize>,
+    edges: &TableFile<Edge>,
     ways: &TableFile<Way>,
     cost_model: C,
 ) -> Option<(usize, usize)> {
     match to_snap {
         Snap::Node { node_idx, .. } => time_costs.get(node_idx).map(|&c| (c, *node_idx)),
-        Snap::Edge(e) => edge_destination_cost(e, time_costs, ways, cost_model),
+        Snap::Edge(e) => edge_destination_cost(e, time_costs, edges, ways, cost_model),
     }
 }
 
 fn edge_destination_cost<C: CostModel>(
     e: &EdgeSnap,
     time_costs: &HashMap<usize, usize>,
+    edges: &TableFile<Edge>,
     ways: &TableFile<Way>,
     cost_model: C,
 ) -> Option<(usize, usize)> {
-    let way = ways.get(e.way_idx).ok()?;
-    let full_cost = cost_model.edge_cost(&way)?;
+    let edge = edges.get(e.edge_idx).ok()?;
+    let way = ways.get(edge.way_idx()).ok()?;
+    let full_cost = cost_model.edge_cost(&edge, &way)?;
 
     // Approaching from the way's from-node (forward direction).
     let via_from = time_costs.get(&e.from_node_idx).map(|&base| {
