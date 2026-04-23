@@ -451,9 +451,15 @@ impl<'s> WayTags<'s> {
                 }
                 match k2 {
                     "oneway" => self.oneway.set_tag(k, v),
-                    "access" => self.access.set_tag(k, v),
+                    "access" => {
+                        if !k.split(':').any(|s| s == "lanes") {
+                            self.access.set_tag(k, v)
+                        }
+                    }
                     _ if !matches!(Mode::from_tag(k2), Mode::default | Mode::unknown) => {
-                        self.access.set_tag(k, v)
+                        if !k.split(':').any(|s| s == "lanes") {
+                            self.access.set_tag(k, v)
+                        }
                     }
                     _ => return false,
                 }
@@ -621,9 +627,24 @@ impl Conditional<'_, Access> {
         match self {
             Self::None => false,
             Self::Simple(a) => a.is_excluded(),
-            Self::Multi(v) => v
-                .iter()
-                .all(|c| c.mode == Mode::unknown || c.value.is_excluded()),
+            // Only exclude a way when a general (no mode/direction/condition) access
+            // entry is explicitly prohibited. Mode- or direction-specific restrictions
+            // (e.g. `foot:left=no`) do not mean the way is globally inaccessible.
+            Self::Multi(v) => {
+                let mut has_general = false;
+                for c in v {
+                    if c.mode == Mode::default
+                        && c.direction == Direction::both
+                        && c.condition.is_none()
+                    {
+                        has_general = true;
+                        if !c.value.is_excluded() {
+                            return false;
+                        }
+                    }
+                }
+                has_general
+            }
         }
     }
 }
