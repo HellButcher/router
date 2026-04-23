@@ -417,12 +417,12 @@ body {
     padding: 2px 0;
     color: var(--text-color);
 
-    span:first-child {
+    > span:first-child {
       color: var(--label-color);
       flex-shrink: 0;
     }
 
-    span:last-child {
+    > span:last-child {
       text-align: right;
       font-variant-numeric: tabular-nums;
       word-break: break-all;
