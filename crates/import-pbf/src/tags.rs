@@ -399,6 +399,7 @@ pub struct WayTags<'s> {
     pub tracktype: Option<TrackType>,
     pub junction: Option<Junction>,
     pub motorroad: bool,
+    pub area: bool,
     pub disused: bool,
     pub abandoned: bool,
     /// Raw value of the `maxspeed` tag, unparsed. Use [`parse_max_speed`] with a
@@ -433,6 +434,7 @@ impl<'s> WayTags<'s> {
             "tracktype" => self.tracktype = FromTag::from_tag(v),
             "junction" => self.junction = FromTag::from_tag(v),
             "motorroad" => self.motorroad = FromTag::from_tag(v),
+            "area" => self.area = FromTag::from_tag(v),
             "disused" => self.disused = FromTag::from_tag(v),
             "abandoned" => self.abandoned = FromTag::from_tag(v),
             "maxspeed" => self.raw_max_speed = Some(v),
@@ -547,6 +549,7 @@ impl<'s> WayTags<'s> {
     pub fn is_excluded(&self) -> bool {
         (!self.ferry && self.highway.is_none_or(|h| h.is_excluded()))
             || self.access.is_excluded()
+            || self.area
             || self.disused
             || self.abandoned
     }
