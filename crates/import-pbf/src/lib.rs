@@ -13,7 +13,7 @@ use router_storage::{
         edge::{Edge, EdgeFlags},
         link_nodes_and_edges,
         node::{Node, NodeId},
-        way::{NO_EDGE, Way, WayId},
+        way::{Way, WayId},
     },
     spatial::SpatialIndexBuilder,
     spatial::haversine_m,
@@ -420,6 +420,11 @@ impl<R: io::BufRead + Send> Importer<R> {
                 edges = edges_slice.len(),
                 "linking"
             );
+            // Link Nodes in NodeId Space first, because we don't have filtered the nodes yet to
+            // connected nodes.
+            // But we need nodes to be connected, to know which are used.
+            // Then the nodes are reducet to only the connected nodes.
+            // After that, we can resolve the NodeIds to node indices.
             edges_slice.par_iter().enumerate().for_each(|(i, edge)| {
                 link_nodes_and_edges(nodes_slice, i, edge);
             });
@@ -450,15 +455,43 @@ impl<R: io::BufRead + Send> Importer<R> {
         // Phase 4a: resolve node indices, dist_m, country_id, and way_idx on each edge.
         tracing::info!("resolving edge data");
         {
-            let _span = tracing::info_span!("resolve_edges").entered();
             let nodes_slice = nodes.get_all().map_err(Error::WriteError)?;
             let nodes_slice: &[Node] = &nodes_slice;
             let ways_slice = ways.get_all().map_err(Error::WriteError)?;
             let ways_slice: &[Way] = &ways_slice;
             let edges_slice = edges.get_all_mut().map_err(Error::WriteError)?;
 
-            edges_slice.par_iter_mut().enumerate().try_for_each(
-                |(edge_idx, edge)| -> Result<()> {
+            // Edges and ways are written in the same sequential order (all edges of
+            // way[i] precede edges of way[i+1]), so a single linear pass with a
+            // cursor resolves way_idx in O(n+m) without extra allocations.
+            // first_edge_idx is set here too — the first occurrence per way is
+            // already the minimum edge index, so no atomic compare-exchange needed.
+            {
+                let _span = tracing::info_span!("resolve_way_indices").entered();
+                let mut way_cursor = 0usize;
+                let mut prev_way_cursor = usize::MAX;
+                for (edge_idx, edge) in edges_slice.iter_mut().enumerate() {
+                    let way_id = WayId(edge.way_idx as i64);
+                    while way_cursor < ways_slice.len() && ways_slice[way_cursor].id < way_id {
+                        way_cursor += 1;
+                    }
+                    if way_cursor >= ways_slice.len() || ways_slice[way_cursor].id != way_id {
+                        return Err(Error::WayIdNotFound(way_id));
+                    }
+                    edge.way_idx = way_cursor as u64;
+                    if way_cursor != prev_way_cursor {
+                        ways_slice[way_cursor]
+                            .first_edge_idx
+                            .store(edge_idx as u64, Ordering::Relaxed);
+                        prev_way_cursor = way_cursor;
+                    }
+                }
+            }
+
+            let _span = tracing::info_span!("resolve_edge_data").entered();
+            edges_slice
+                .par_iter_mut()
+                .try_for_each(|edge| -> Result<()> {
                     let from_id = NodeId(edge.from_node_idx as i64);
                     let to_id = NodeId(edge.to_node_idx as i64);
                     let from_idx = nodes_slice
@@ -481,26 +514,11 @@ impl<R: io::BufRead + Send> Importer<R> {
                         .map(|l| l.lookup(from_pos.lat, from_pos.lon))
                         .unwrap_or(CountryId::UNKNOWN);
 
-                    // way_idx is still the raw WayId at this point, so we need to look it up in the Way table to resolve it to the correct index.
-                    let way_id = WayId(edge.way_idx as i64);
-                    let way_idx = ways_slice
-                        .binary_search_by_key(&way_id, |w| w.id)
-                        .map_err(|_| Error::WayIdNotFound(way_id))?;
-
-                    edge.resolve(way_idx, dist_m, country_id);
-
-                    if let Some(way) = ways_slice.get(edge.way_idx()) {
-                        let _ = way.first_edge_idx.compare_exchange(
-                            NO_EDGE,
-                            edge_idx as u64,
-                            Ordering::Acquire,
-                            Ordering::Relaxed,
-                        );
-                    }
+                    // way_idx was already resolved in the sequential pass above.
+                    edge.resolve(edge.way_idx(), dist_m, country_id);
 
                     Ok(())
-                },
-            )?;
+                })?;
         }
 
         tracing::info!("flushing nodes, edges, and ways");

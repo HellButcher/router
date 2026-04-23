@@ -138,9 +138,137 @@ type RootTranslation = {
 			 */
 			maxSpeedDefault: string
 			/**
-			 * S​u​r​f​a​c​e
+			 * S​u​r​f​a​c​e​ ​q​u​a​l​i​t​y
 			 */
 			surfaceQuality: string
+			highwayClass: {
+				/**
+				 * U​n​k​n​o​w​n
+				 */
+				Unknown: string
+				/**
+				 * M​o​t​o​r​w​a​y
+				 */
+				Motorway: string
+				/**
+				 * T​r​u​n​k
+				 */
+				Trunk: string
+				/**
+				 * P​r​i​m​a​r​y
+				 */
+				Primary: string
+				/**
+				 * S​e​c​o​n​d​a​r​y
+				 */
+				Secondary: string
+				/**
+				 * T​e​r​t​i​a​r​y
+				 */
+				Tertiary: string
+				/**
+				 * M​o​t​o​r​w​a​y​ ​L​i​n​k
+				 */
+				MotorwayLink: string
+				/**
+				 * T​r​u​n​k​ ​L​i​n​k
+				 */
+				TrunkLink: string
+				/**
+				 * P​r​i​m​a​r​y​ ​L​i​n​k
+				 */
+				PrimaryLink: string
+				/**
+				 * S​e​c​o​n​d​a​r​y​ ​L​i​n​k
+				 */
+				SecondaryLink: string
+				/**
+				 * T​e​r​t​i​a​r​y​ ​L​i​n​k
+				 */
+				TertiaryLink: string
+				/**
+				 * U​n​c​l​a​s​s​i​f​i​e​d
+				 */
+				Unclassified: string
+				/**
+				 * R​e​s​i​d​e​n​t​i​a​l
+				 */
+				Residential: string
+				/**
+				 * L​i​v​i​n​g​ ​S​t​r​e​e​t
+				 */
+				LivingStreet: string
+				/**
+				 * S​e​r​v​i​c​e
+				 */
+				Service: string
+				/**
+				 * T​r​a​c​k
+				 */
+				Track: string
+				/**
+				 * R​o​a​d
+				 */
+				Road: string
+				/**
+				 * P​e​d​e​s​t​r​i​a​n
+				 */
+				Pedestrian: string
+				/**
+				 * F​o​o​t​w​a​y
+				 */
+				Footway: string
+				/**
+				 * C​y​c​l​e​w​a​y
+				 */
+				Cycleway: string
+				/**
+				 * P​a​t​h
+				 */
+				Path: string
+				/**
+				 * B​r​i​d​l​e​w​a​y
+				 */
+				Bridleway: string
+				/**
+				 * F​e​r​r​y
+				 */
+				Ferry: string
+			}
+			surfaceQualityClass: {
+				/**
+				 * U​n​k​n​o​w​n
+				 */
+				Unknown: string
+				/**
+				 * E​x​c​e​l​l​e​n​t
+				 */
+				Excellent: string
+				/**
+				 * G​o​o​d
+				 */
+				Good: string
+				/**
+				 * I​n​t​e​r​m​e​d​i​a​t​e
+				 */
+				Intermediate: string
+				/**
+				 * B​a​d
+				 */
+				Bad: string
+				/**
+				 * V​e​r​y​ ​B​a​d
+				 */
+				VeryBad: string
+				/**
+				 * H​o​r​r​i​b​l​e
+				 */
+				Horrible: string
+				/**
+				 * I​m​p​a​s​s​a​b​l​e
+				 */
+				Impassable: string
+			}
 			/**
 			 * C​o​u​n​t​r​y
 			 */
@@ -179,13 +307,13 @@ type RootTranslation = {
 			 */
 			maxWeight: string
 			/**
-			 * {​v​a​l​}​ ​d​m​ ​(​{​m​}​ ​m​)
+			 * {​v​a​l​}​ ​c​m​ ​(​{​m​}​ ​m​)
 			 * @param {number} m
 			 * @param {number} val
 			 */
 			cmValue: RequiredParams<'m' | 'val'>
 			/**
-			 * {​v​a​l​}​ ​×​ ​2​5​0​ ​k​g​ ​(​{​t​}​ ​t​)
+			 * {​v​a​l​}​ ​k​g​ ​(​{​t​}​ ​t​)
 			 * @param {number} t
 			 * @param {number} val
 			 */
@@ -444,9 +572,137 @@ export type TranslationFunctions = {
 			 */
 			maxSpeedDefault: () => LocalizedString
 			/**
-			 * Surface
+			 * Surface quality
 			 */
 			surfaceQuality: () => LocalizedString
+			highwayClass: {
+				/**
+				 * Unknown
+				 */
+				Unknown: () => LocalizedString
+				/**
+				 * Motorway
+				 */
+				Motorway: () => LocalizedString
+				/**
+				 * Trunk
+				 */
+				Trunk: () => LocalizedString
+				/**
+				 * Primary
+				 */
+				Primary: () => LocalizedString
+				/**
+				 * Secondary
+				 */
+				Secondary: () => LocalizedString
+				/**
+				 * Tertiary
+				 */
+				Tertiary: () => LocalizedString
+				/**
+				 * Motorway Link
+				 */
+				MotorwayLink: () => LocalizedString
+				/**
+				 * Trunk Link
+				 */
+				TrunkLink: () => LocalizedString
+				/**
+				 * Primary Link
+				 */
+				PrimaryLink: () => LocalizedString
+				/**
+				 * Secondary Link
+				 */
+				SecondaryLink: () => LocalizedString
+				/**
+				 * Tertiary Link
+				 */
+				TertiaryLink: () => LocalizedString
+				/**
+				 * Unclassified
+				 */
+				Unclassified: () => LocalizedString
+				/**
+				 * Residential
+				 */
+				Residential: () => LocalizedString
+				/**
+				 * Living Street
+				 */
+				LivingStreet: () => LocalizedString
+				/**
+				 * Service
+				 */
+				Service: () => LocalizedString
+				/**
+				 * Track
+				 */
+				Track: () => LocalizedString
+				/**
+				 * Road
+				 */
+				Road: () => LocalizedString
+				/**
+				 * Pedestrian
+				 */
+				Pedestrian: () => LocalizedString
+				/**
+				 * Footway
+				 */
+				Footway: () => LocalizedString
+				/**
+				 * Cycleway
+				 */
+				Cycleway: () => LocalizedString
+				/**
+				 * Path
+				 */
+				Path: () => LocalizedString
+				/**
+				 * Bridleway
+				 */
+				Bridleway: () => LocalizedString
+				/**
+				 * Ferry
+				 */
+				Ferry: () => LocalizedString
+			}
+			surfaceQualityClass: {
+				/**
+				 * Unknown
+				 */
+				Unknown: () => LocalizedString
+				/**
+				 * Excellent
+				 */
+				Excellent: () => LocalizedString
+				/**
+				 * Good
+				 */
+				Good: () => LocalizedString
+				/**
+				 * Intermediate
+				 */
+				Intermediate: () => LocalizedString
+				/**
+				 * Bad
+				 */
+				Bad: () => LocalizedString
+				/**
+				 * Very Bad
+				 */
+				VeryBad: () => LocalizedString
+				/**
+				 * Horrible
+				 */
+				Horrible: () => LocalizedString
+				/**
+				 * Impassable
+				 */
+				Impassable: () => LocalizedString
+			}
 			/**
 			 * Country
 			 */
@@ -484,11 +740,11 @@ export type TranslationFunctions = {
 			 */
 			maxWeight: () => LocalizedString
 			/**
-			 * {val} dm ({m} m)
+			 * {val} cm ({m} m)
 			 */
 			cmValue: (arg: { m: number, val: number }) => LocalizedString
 			/**
-			 * {val} × 250 kg ({t} t)
+			 * {val} kg ({t} t)
 			 */
 			weightKgValue: (arg: { t: number, val: number }) => LocalizedString
 			/**

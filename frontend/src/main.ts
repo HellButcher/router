@@ -201,14 +201,33 @@ function formatCoord(v: number) {
   return v.toFixed(5);
 }
 
-function wayFlagList(way: NonNullable<LocateInfo["way"]>): LocalizedString[] {
+function translateHighwayClass(raw: string): string {
+  const map = LL().locate.inspect.highwayClass as unknown as Record<
+    string,
+    () => string
+  >;
+  return map[raw]?.() ?? raw;
+}
+
+function translateSurfaceQuality(raw: string): string {
+  const map = LL().locate.inspect.surfaceQualityClass as unknown as Record<
+    string,
+    () => string
+  >;
+  return map[raw]?.() ?? raw;
+}
+
+function wayFlagList(
+  way: NonNullable<LocateInfo["way"]>,
+  edge?: LocateInfo["edge"],
+): LocalizedString[] {
   const t = LL().locate.wayFlags;
   return [
     way.oneway ? t.oneway() : null,
-    way.no_motor ? t.noMotor() : null,
-    way.no_bicycle ? t.noBicycle() : null,
-    way.no_foot ? t.noFoot() : null,
-    way.no_hgv ? t.noHgv() : null,
+    edge?.no_motor ? t.noMotor() : null,
+    edge?.no_bicycle ? t.noBicycle() : null,
+    edge?.no_foot ? t.noFoot() : null,
+    edge?.no_hgv ? t.noHgv() : null,
     way.toll ? t.toll() : null,
     way.tunnel ? t.tunnel() : null,
     way.bridge ? t.bridge() : null,
@@ -453,22 +472,34 @@ function sidebarTemplate() {
               locateInfo.way
                 ? html`
               <div class="locate-info-row"><span>${t.locate.inspect.osmWayId()}</span><span>${locateInfo.way.id}</span></div>
-              <div class="locate-info-row"><span>${t.locate.inspect.highway()}</span><span>${locateInfo.way.highway}</span></div>
-              <div class="locate-info-row"><span>${t.locate.inspect.maxSpeed()}</span><span>${locateInfo.way.max_speed ? t.locate.inspect.maxSpeedKmh({ speed: locateInfo.way.max_speed }) : t.locate.inspect.maxSpeedDefault()}</span></div>
-              <div class="locate-info-row"><span>${t.locate.inspect.surfaceQuality()}</span><span>${locateInfo.way.surface_quality}</span></div>
-              ${locateInfo.way.country_id ? html`<div class="locate-info-row"><span>${t.locate.inspect.country()}</span><span>${locateInfo.way.country_id}</span></div>` : ""}
-              <div class="locate-info-row"><span>${t.locate.inspect.distM()}</span><span>${t.locate.inspect.distMValue({ dist: locateInfo.way.dist_m })}</span></div>
+              <div class="locate-info-row"><span>${t.locate.inspect.highway()}</span><span>${translateHighwayClass(locateInfo.way.highway)}</span></div>
+              <div class="locate-info-row"><span>${t.locate.inspect.maxSpeed()}</span><span>${locateInfo.edge?.max_speed ? t.locate.inspect.maxSpeedKmh({ speed: locateInfo.edge.max_speed }) : t.locate.inspect.maxSpeedDefault()}</span></div>
+              <div class="locate-info-row"><span>${t.locate.inspect.surfaceQuality()}</span><span>${translateSurfaceQuality(locateInfo.way.surface_quality)}</span></div>
+              ${locateInfo.edge?.country_id ? html`<div class="locate-info-row"><span>${t.locate.inspect.country()}</span><span>${locateInfo.edge.country_id}</span></div>` : ""}
+              ${locateInfo.edge ? html`<div class="locate-info-row"><span>${t.locate.inspect.distM()}</span><span>${t.locate.inspect.distMValue({ dist: locateInfo.edge.dist_m })}</span></div>` : ""}
               ${locateInfo.location.fraction != null ? html`<div class="locate-info-row"><span>${t.locate.inspect.fraction()}</span><span>${locateInfo.location.fraction.toFixed(3)}</span></div>` : ""}
-              ${wayFlagList(locateInfo.way).length > 0 ? html`<div class="locate-info-row"><span>${t.locate.inspect.flags()}</span><span>${wayFlagList(locateInfo.way).join(", ")}</span></div>` : ""}
+              ${wayFlagList(locateInfo.way, locateInfo.edge).length > 0 ? html`<div class="locate-info-row"><span>${t.locate.inspect.flags()}</span><span>${wayFlagList(locateInfo.way, locateInfo.edge).join(", ")}</span></div>` : ""}
               ${locateInfo.way.max_height_cm ? html`<div class="locate-info-row"><span>${t.locate.inspect.maxHeight()}</span><span>${t.locate.inspect.cmValue({ val: locateInfo.way.max_height_cm, m: locateInfo.way.max_height_cm / 100 })}</span></div>` : ""}
               ${locateInfo.way.max_width_cm ? html`<div class="locate-info-row"><span>${t.locate.inspect.maxWidth()}</span><span>${t.locate.inspect.cmValue({ val: locateInfo.way.max_width_cm, m: locateInfo.way.max_width_cm / 100 })}</span></div>` : ""}
               ${locateInfo.way.max_weight_kg ? html`<div class="locate-info-row"><span>${t.locate.inspect.maxWeight()}</span><span>${t.locate.inspect.weightKgValue({ val: locateInfo.way.max_weight_kg, t: locateInfo.way.max_weight_kg / 1000 })}</span></div>` : ""}
+              ${
+                locateInfo.nodes?.[0]
+                  ? html`
               <div class="locate-info-subheader">${t.locate.inspect.fromNode()}</div>
-              <div class="locate-info-row"><span>${t.locate.inspect.osmNodeId()}</span><span>${locateInfo.way.from_node.id}</span></div>
-              <div class="locate-info-row"><span>${t.locate.inspect.position()}</span><span>${locateInfo.way.from_node.lat.toFixed(5)}, ${locateInfo.way.from_node.lon.toFixed(5)}</span></div>
+              <div class="locate-info-row"><span>${t.locate.inspect.osmNodeId()}</span><span>${locateInfo.nodes[0].id}</span></div>
+              <div class="locate-info-row"><span>${t.locate.inspect.position()}</span><span>${locateInfo.nodes[0].lat.toFixed(5)}, ${locateInfo.nodes[0].lon.toFixed(5)}</span></div>
+              `
+                  : ""
+              }
+              ${
+                locateInfo.nodes?.[1]
+                  ? html`
               <div class="locate-info-subheader">${t.locate.inspect.toNode()}</div>
-              <div class="locate-info-row"><span>${t.locate.inspect.osmNodeId()}</span><span>${locateInfo.way.to_node.id}</span></div>
-              <div class="locate-info-row"><span>${t.locate.inspect.position()}</span><span>${locateInfo.way.to_node.lat.toFixed(5)}, ${locateInfo.way.to_node.lon.toFixed(5)}</span></div>
+              <div class="locate-info-row"><span>${t.locate.inspect.osmNodeId()}</span><span>${locateInfo.nodes[1].id}</span></div>
+              <div class="locate-info-row"><span>${t.locate.inspect.position()}</span><span>${locateInfo.nodes[1].lat.toFixed(5)}, ${locateInfo.nodes[1].lon.toFixed(5)}</span></div>
+              `
+                  : ""
+              }
             `
                 : ""
             }

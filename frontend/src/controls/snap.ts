@@ -13,6 +13,7 @@ import { LL } from "../i18n/index.js";
 type Location = components["schemas"]["Location"];
 type NodeMeta = components["schemas"]["NodeMeta"];
 type EdgeMeta = components["schemas"]["EdgeMeta"];
+type WayMeta = components["schemas"]["WayMeta"];
 
 // ── public event ─────────────────────────────────────────────────────────────
 
@@ -21,7 +22,9 @@ export const LOCATE_INFO_EVENT = "locate-info";
 export interface LocateInfo {
   location: Location;
   node?: NodeMeta;
-  way?: EdgeMeta;
+  nodes?: NodeMeta[];
+  way?: WayMeta;
+  edge?: EdgeMeta;
 }
 
 // ── modes ─────────────────────────────────────────────────────────────────────
@@ -153,10 +156,10 @@ export class SnapControl implements IControl {
       this._map.removeSource(PIN_SEGMENT_SOURCE);
   }
 
-  private _setSegment(sourceId: string, way: EdgeMeta | null) {
+  private _setSegment(sourceId: string, nodes: NodeMeta[] | null) {
     const src = this._map?.getSource(sourceId) as GeoJSONSource | undefined;
     if (!src) return;
-    if (!way) {
+    if (!nodes || nodes.length < 2) {
       src.setData({ type: "FeatureCollection", features: [] });
       return;
     }
@@ -164,10 +167,7 @@ export class SnapControl implements IControl {
       type: "Feature",
       geometry: {
         type: "LineString",
-        coordinates: [
-          [way.from_node.lon, way.from_node.lat],
-          [way.to_node.lon, way.to_node.lat],
-        ],
+        coordinates: nodes.map((n) => [n.lon, n.lat]),
       },
       properties: {},
     });
@@ -240,7 +240,7 @@ export class SnapControl implements IControl {
 
     // Pinned segment (red, edge mode only) — layer created here so it sits above route layers.
     this._ensureSegmentLayer();
-    this._setSegment(PIN_SEGMENT_SOURCE, info.way ?? null);
+    this._setSegment(PIN_SEGMENT_SOURCE, info.nodes ?? null);
 
     // Notify sidebar
     document.dispatchEvent(
@@ -276,10 +276,13 @@ export class SnapControl implements IControl {
         });
         const loc = data?.locations?.[0];
         if (loc) {
+          const nodeMeta = loc.node_meta;
           this._applyPin({
             location: loc,
-            node: loc.node_meta ?? undefined,
-            way: loc.edge_meta ?? undefined,
+            node: nodeMeta && !Array.isArray(nodeMeta) ? nodeMeta : undefined,
+            nodes: Array.isArray(nodeMeta) ? nodeMeta : undefined,
+            way: loc.way_meta ?? undefined,
+            edge: loc.edge_meta ?? undefined,
           });
         }
       } catch {
@@ -314,10 +317,13 @@ export class SnapControl implements IControl {
       const loc = data?.locations?.[0];
       if (!loc) return;
 
+      const nodeMeta = loc.node_meta;
       const info: LocateInfo = {
         location: loc,
-        node: loc.node_meta ?? undefined,
-        way: loc.edge_meta ?? undefined,
+        node: nodeMeta && !Array.isArray(nodeMeta) ? nodeMeta : undefined,
+        nodes: Array.isArray(nodeMeta) ? nodeMeta : undefined,
+        way: loc.way_meta ?? undefined,
+        edge: loc.edge_meta ?? undefined,
       };
       this._currentInfo = info;
 
