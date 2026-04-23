@@ -14,6 +14,25 @@ use super::{
     profile::VehicleType,
 };
 
+// ── MetaDetail ────────────────────────────────────────────────────────────────
+
+/// Controls how much meta information is included in locate responses.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub enum MetaDetail {
+    /// No meta information.
+    #[default]
+    None,
+    /// For node snaps: the snapped [`NodeMeta`].
+    /// For edge snaps: [`EdgeMeta`], [`WayMeta`], and the two endpoint [`NodeMeta`]s
+    /// (`from_node_idx` / `to_node_idx` in [`EdgeMeta`] index into `node_meta`).
+    Light,
+    /// Like [`MetaDetail::Light`], but `node_meta` contains all ordered nodes of the
+    /// full OSM way; `from_node_idx` / `to_node_idx` still point to the snapped edge.
+    FullWay,
+}
+
 // ── SnapMode ──────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -44,10 +63,10 @@ pub struct LocateRequest {
     /// segment. Defaults to [`SnapMode::Node`].
     #[cfg_attr(feature = "serde", serde(default))]
     pub snap_mode: SnapMode,
-    /// When `true`, the response locations include [`NodeMeta`] / [`EdgeMeta`].
-    /// Defaults to `false` to keep responses small.
+    /// Controls how much meta information is included in the response.
+    /// Defaults to [`MetaDetail::None`].
     #[cfg_attr(feature = "serde", serde(default))]
-    pub with_meta: bool,
+    pub with_meta: MetaDetail,
     /// When `true` and `snap_mode` is [`SnapMode::Edge`], ways that are
     /// inaccessible for the selected profile are skipped during snapping.
     /// Defaults to `false`.
@@ -116,7 +135,7 @@ impl Service {
                     {
                         loc.coordinate.lat = snapped_lat;
                         loc.coordinate.lon = snapped_lon;
-                        if request.with_meta
+                        if request.with_meta != MetaDetail::None
                             && let Ok(node) = self.nodes.get(node_idx as usize)
                         {
                             loc.node_meta = Some(SingleOrVec::single(NodeMeta::from(&node)));
@@ -129,18 +148,29 @@ impl Service {
                     {
                         loc.coordinate = snap.pos;
                         loc.fraction = Some(snap.fraction);
-                        if request.with_meta
+                        if request.with_meta != MetaDetail::None
                             && let Ok(edge) = self.edges.get(snap.edge_idx)
                             && let Ok(way) = self.ways.get(edge.way_idx())
                         {
-                            let mut nodes = Vec::with_capacity(2);
-                            if let Ok(from_node) = self.nodes.get(edge.from_node_idx()) {
-                                nodes.push(NodeMeta::from(&from_node));
-                            }
-                            if let Ok(to_node) = self.nodes.get(edge.to_node_idx()) {
-                                nodes.push(NodeMeta::from(&to_node));
-                            }
-                            loc.edge_meta = Some(EdgeMeta::from(&edge));
+                            let (nodes, from_node_idx, to_node_idx) =
+                                if request.with_meta == MetaDetail::FullWay {
+                                    let wt = self.collect_way(edge.way_idx(), &way);
+                                    let from = wt.node_pos(edge.from_node_idx());
+                                    let to = wt.node_pos(edge.to_node_idx());
+                                    (wt.nodes, from, to)
+                                } else {
+                                    // Light: just the two edge endpoints, indices are always 0 and 1
+                                    let mut v = Vec::with_capacity(2);
+                                    if let Ok(n) = self.nodes.get(edge.from_node_idx()) {
+                                        v.push(NodeMeta::from(&n));
+                                    }
+                                    if let Ok(n) = self.nodes.get(edge.to_node_idx()) {
+                                        v.push(NodeMeta::from(&n));
+                                    }
+                                    (v, Some(0), Some(1))
+                                };
+                            loc.edge_meta =
+                                Some(EdgeMeta::from(&edge, from_node_idx, to_node_idx));
                             loc.way_meta = Some(WayMeta::from(&way));
                             loc.node_meta = Some(SingleOrVec::Vec(nodes));
                         }

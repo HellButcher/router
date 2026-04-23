@@ -1,7 +1,4 @@
-use router_storage::data::{
-    node::NodeId,
-    way::{NO_EDGE, WayId},
-};
+use router_storage::data::{node::NodeId, way::WayId};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -69,51 +66,11 @@ impl Service {
                     .ways
                     .find(&WayId(id))?
                     .ok_or_else(|| Error::InvalidRequest(format!("way {id} not found")))?;
-                // Retrieve the stripe of edges from first_edge_idx.
-                let mut visited = std::collections::HashSet::new();
-                let mut edges = Vec::new();
-                let mut nodes = Vec::new();
-                let mut edge = self
-                    .edges
-                    .get(way.first_edge_idx())
-                    .map_err(Error::StorageError)?;
-                let node_index = edge.from_node_idx();
-                let node = self.nodes.get(node_index).map_err(Error::StorageError)?;
-                visited.insert(node_index);
-                nodes.push(NodeMeta::from(&node));
-                loop {
-                    // add the end of the edge
-                    let node_index = edge.to_node_idx();
-                    let node = self.nodes.get(node_index).map_err(Error::StorageError)?;
-                    nodes.push(NodeMeta::from(&node));
-                    edges.push(EdgeMeta::from(&edge));
-                    if visited.insert(edge.to_node_idx()) {
-                        break; // we've come full circle, so stop
-                    }
-
-                    // follow the way
-                    let mut next_edge_idx = edge.next_edge();
-                    let mut found = false;
-                    while next_edge_idx != NO_EDGE as usize {
-                        let next_edge =
-                            self.edges.get(next_edge_idx).map_err(Error::StorageError)?;
-                        if next_edge.way_idx() == way_idx {
-                            edge = next_edge;
-                            found = true;
-                            break;
-                        } else {
-                            next_edge_idx = next_edge.next_edge();
-                        }
-                    }
-                    if !found {
-                        break; // end of stripe, so stop
-                    }
-                }
-                let way = WayMeta::from(&way);
+                let wt = self.collect_way(way_idx, &way);
                 Ok(InspectResponse {
-                    node: vec![],
-                    way: Some(way),
-                    edge: edges,
+                    node: wt.nodes,
+                    way: Some(WayMeta::from(&way)),
+                    edge: wt.edges,
                 })
             }
             _ => Err(Error::InvalidRequest(

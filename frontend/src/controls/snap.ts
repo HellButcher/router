@@ -21,7 +21,9 @@ export const LOCATE_INFO_EVENT = "locate-info";
 
 export interface LocateInfo {
   location: Location;
+  /** Snapped node (node mode). */
   node?: NodeMeta;
+  /** Ordered nodes: two endpoints for Light, all way nodes for FullWay. */
   nodes?: NodeMeta[];
   way?: WayMeta;
   edge?: EdgeMeta;
@@ -43,8 +45,9 @@ const MODE_TITLES: Record<Mode, string> = {
   },
 };
 
-const PIN_SEGMENT_SOURCE = "_locate-pin-segment";
-const PIN_SEGMENT_LAYER = "_locate-pin-segment";
+const LOCATE_SOURCE = "_locate";
+const LOCATE_WAY_LAYER = "_locate-way";
+const LOCATE_SEGMENT_LAYER = "_locate-segment";
 
 // ── control ───────────────────────────────────────────────────────────────────
 
@@ -123,22 +126,36 @@ export class SnapControl implements IControl {
 
   private _addLayers() {
     if (!this._map) return;
-    if (!this._map.getSource(PIN_SEGMENT_SOURCE)) {
-      this._map.addSource(PIN_SEGMENT_SOURCE, {
+    if (!this._map.getSource(LOCATE_SOURCE)) {
+      this._map.addSource(LOCATE_SOURCE, {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
       });
     }
-    // Layer is added lazily in _applyPin so it lands on top of all route layers.
+    // Layers are added lazily in _ensureLayers so they land on top of route layers.
   }
 
-  private _ensureSegmentLayer() {
+  private _ensureLayers() {
     if (!this._map) return;
-    if (!this._map.getLayer(PIN_SEGMENT_LAYER)) {
+    if (!this._map.getLayer(LOCATE_WAY_LAYER)) {
       this._map.addLayer({
-        id: PIN_SEGMENT_LAYER,
+        id: LOCATE_WAY_LAYER,
         type: "line",
-        source: PIN_SEGMENT_SOURCE,
+        source: LOCATE_SOURCE,
+        filter: ["==", ["get", "kind"], "way"],
+        paint: {
+          "line-color": "#e03030",
+          "line-width": 3,
+          "line-opacity": 0.35,
+        },
+      });
+    }
+    if (!this._map.getLayer(LOCATE_SEGMENT_LAYER)) {
+      this._map.addLayer({
+        id: LOCATE_SEGMENT_LAYER,
+        type: "line",
+        source: LOCATE_SOURCE,
+        filter: ["==", ["get", "kind"], "edge"],
         paint: {
           "line-color": "#e03030",
           "line-width": 4,
@@ -150,27 +167,46 @@ export class SnapControl implements IControl {
 
   private _removeLayers() {
     if (!this._map) return;
-    if (this._map.getLayer(PIN_SEGMENT_LAYER))
-      this._map.removeLayer(PIN_SEGMENT_LAYER);
-    if (this._map.getSource(PIN_SEGMENT_SOURCE))
-      this._map.removeSource(PIN_SEGMENT_SOURCE);
+    for (const id of [LOCATE_WAY_LAYER, LOCATE_SEGMENT_LAYER]) {
+      if (this._map.getLayer(id)) this._map.removeLayer(id);
+    }
+    if (this._map.getSource(LOCATE_SOURCE)) this._map.removeSource(LOCATE_SOURCE);
   }
 
-  private _setSegment(sourceId: string, nodes: NodeMeta[] | null) {
-    const src = this._map?.getSource(sourceId) as GeoJSONSource | undefined;
+  /** Update the shared source with way + edge features, or clear it. */
+  private _updateGeometry(info: LocateInfo | null) {
+    const src = this._map?.getSource(LOCATE_SOURCE) as GeoJSONSource | undefined;
     if (!src) return;
-    if (!nodes || nodes.length < 2) {
+
+    if (!info?.nodes?.length) {
       src.setData({ type: "FeatureCollection", features: [] });
       return;
     }
-    src.setData({
-      type: "Feature",
-      geometry: {
-        type: "LineString",
-        coordinates: nodes.map((n) => [n.lon, n.lat]),
-      },
-      properties: {},
-    });
+
+    const { nodes, edge } = info;
+    const features: GeoJSON.Feature[] = [];
+
+    if (nodes.length >= 2) {
+      features.push({
+        type: "Feature",
+        geometry: { type: "LineString", coordinates: nodes.map((n) => [n.lon, n.lat]) },
+        properties: { kind: "way" },
+      });
+    }
+
+    const fi = edge?.from_node_idx ?? 0;
+    const ti = edge?.to_node_idx ?? 1;
+    const from = nodes[fi];
+    const to = nodes[ti];
+    if (from && to) {
+      features.push({
+        type: "Feature",
+        geometry: { type: "LineString", coordinates: [[from.lon, from.lat], [to.lon, to.lat]] },
+        properties: { kind: "edge" },
+      });
+    }
+
+    src.setData({ type: "FeatureCollection", features });
   }
 
   // ── mode cycling ────────────────────────────────────────────────────────────
@@ -212,6 +248,8 @@ export class SnapControl implements IControl {
     this._hoverMarker?.remove();
     this._hoverMarker = undefined;
     this._currentInfo = undefined;
+    // Only clear geometry if nothing is pinned
+    if (!this._pinnedInfo) this._updateGeometry(null);
   }
 
   // ── pin helpers ──────────────────────────────────────────────────────────────
@@ -219,7 +257,7 @@ export class SnapControl implements IControl {
   private _clearPin() {
     this._pinMarker?.remove();
     this._pinMarker = undefined;
-    this._setSegment(PIN_SEGMENT_SOURCE, null);
+    this._updateGeometry(null);
     this._pinnedInfo = undefined;
     document.dispatchEvent(
       new CustomEvent<null>(LOCATE_INFO_EVENT, { detail: null }),
@@ -238,9 +276,9 @@ export class SnapControl implements IControl {
       .setLngLat([info.location.lon, info.location.lat])
       .addTo(this._map);
 
-    // Pinned segment (red, edge mode only) — layer created here so it sits above route layers.
-    this._ensureSegmentLayer();
-    this._setSegment(PIN_SEGMENT_SOURCE, info.nodes ?? null);
+    // Geometry layers — created lazily so they land on top of route layers.
+    this._ensureLayers();
+    this._updateGeometry(info);
 
     // Notify sidebar
     document.dispatchEvent(
@@ -271,20 +309,11 @@ export class SnapControl implements IControl {
           body: {
             locations: [{ lat, lon }],
             snap_mode: this._mode === "node" ? "Node" : "Edge",
-            with_meta: true,
+            with_meta: "FullWay",
           },
         });
         const loc = data?.locations?.[0];
-        if (loc) {
-          const nodeMeta = loc.node_meta;
-          this._applyPin({
-            location: loc,
-            node: nodeMeta && !Array.isArray(nodeMeta) ? nodeMeta : undefined,
-            nodes: Array.isArray(nodeMeta) ? nodeMeta : undefined,
-            way: loc.way_meta ?? undefined,
-            edge: loc.edge_meta ?? undefined,
-          });
-        }
+        if (loc) this._applyPin(_parseLocateInfo(loc));
       } catch {
         // ignore
       }
@@ -310,6 +339,7 @@ export class SnapControl implements IControl {
         body: {
           locations: [{ lat, lon: lng }],
           snap_mode: this._mode === "node" ? "Node" : "Edge",
+          with_meta: "Light",
         },
         signal: ac.signal,
       });
@@ -317,14 +347,7 @@ export class SnapControl implements IControl {
       const loc = data?.locations?.[0];
       if (!loc) return;
 
-      const nodeMeta = loc.node_meta;
-      const info: LocateInfo = {
-        location: loc,
-        node: nodeMeta && !Array.isArray(nodeMeta) ? nodeMeta : undefined,
-        nodes: Array.isArray(nodeMeta) ? nodeMeta : undefined,
-        way: loc.way_meta ?? undefined,
-        edge: loc.edge_meta ?? undefined,
-      };
+      const info = _parseLocateInfo(loc);
       this._currentInfo = info;
 
       // Update hover marker
@@ -337,6 +360,12 @@ export class SnapControl implements IControl {
           .setLngLat([loc.lon, loc.lat])
           .addTo(this._map);
       }
+
+      // Show edge segment on hover (only if nothing is pinned)
+      if (!this._pinnedInfo) {
+        this._ensureLayers();
+        this._updateGeometry(info);
+      }
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === "AbortError") return;
     } finally {
@@ -344,4 +373,17 @@ export class SnapControl implements IControl {
       if (this._pendingLatLng) this._flush();
     }
   }
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+function _parseLocateInfo(loc: Location): LocateInfo {
+  const nodeMeta = loc.node_meta;
+  return {
+    location: loc,
+    node: nodeMeta && !Array.isArray(nodeMeta) ? nodeMeta : undefined,
+    nodes: Array.isArray(nodeMeta) ? nodeMeta : undefined,
+    way: loc.way_meta ?? undefined,
+    edge: loc.edge_meta ?? undefined,
+  };
 }

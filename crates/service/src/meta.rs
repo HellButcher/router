@@ -2,8 +2,83 @@ use router_storage::data::{
     attrib::{HighwayClass, NodeFlags, WayFlags},
     edge::{Edge, EdgeFlags},
     node::Node,
-    way::Way,
+    way::{Way, NO_EDGE},
 };
+
+use crate::Service;
+
+// ── WayTraversal ──────────────────────────────────────────────────────────────
+
+/// All nodes and edges belonging to one OSM way, in traversal order.
+pub struct WayTraversal {
+    pub nodes: Vec<NodeMeta>,
+    pub edges: Vec<EdgeMeta>,
+    /// Storage node indices parallel to `nodes`, used for position lookup.
+    node_storage_indices: Vec<usize>,
+}
+
+impl WayTraversal {
+    /// Returns the position of a node in `nodes` by its storage index.
+    pub fn node_pos(&self, storage_idx: usize) -> Option<usize> {
+        self.node_storage_indices.iter().position(|&i| i == storage_idx)
+    }
+}
+
+impl Service {
+    /// Collect all ordered nodes and edges of the OSM way identified by
+    /// `way_idx`, starting from `way.first_edge_idx()`.
+    pub fn collect_way(&self, way_idx: usize, way: &Way) -> WayTraversal {
+        let mut nodes: Vec<NodeMeta> = Vec::new();
+        let mut edges: Vec<EdgeMeta> = Vec::new();
+        let mut node_storage_indices: Vec<usize> = Vec::new();
+
+        let Ok(mut edge) = self.edges.get(way.first_edge_idx()) else {
+            return WayTraversal { nodes, edges, node_storage_indices };
+        };
+
+        // Seed with the first from-node
+        let start_idx = edge.from_node_idx();
+        if let Ok(n) = self.nodes.get(start_idx) {
+            node_storage_indices.push(start_idx);
+            nodes.push(NodeMeta::from(&n));
+        }
+
+        loop {
+            let to_idx = edge.to_node_idx();
+            // Full circle: stop before adding a duplicate
+            if node_storage_indices.contains(&to_idx) {
+                edges.push(EdgeMeta::from(&edge, None, None));
+                break;
+            }
+            if let Ok(n) = self.nodes.get(to_idx) {
+                node_storage_indices.push(to_idx);
+                nodes.push(NodeMeta::from(&n));
+            }
+            edges.push(EdgeMeta::from(&edge, None, None));
+
+            // Advance: find the outbound edge from to_idx that belongs to this way.
+            // next_edge() is the *from-node* adjacency list, so we must start from
+            // the to_node's outbound list, not from the current edge's next_edge.
+            let Ok(to_node) = self.nodes.get(to_idx) else { break };
+            let mut next_idx = to_node.first_edge_idx_outbound();
+            let mut found = false;
+            while next_idx != NO_EDGE as usize {
+                let Ok(next) = self.edges.get(next_idx) else { break };
+                if next.way_idx() == way_idx {
+                    edge = next;
+                    found = true;
+                    break;
+                }
+                next_idx = next.next_edge();
+            }
+            if !found {
+                break;
+            }
+        }
+
+        WayTraversal { nodes, edges, node_storage_indices }
+    }
+}
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -134,13 +209,18 @@ pub struct EdgeMeta {
     pub no_bicycle: bool,
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
     pub no_foot: bool,
+    /// Index of the from-node of this edge within the accompanying `node_meta` array.
+    /// Only present when `node_meta` is populated.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub from_node_idx: Option<usize>,
+    /// Index of the to-node of this edge within the accompanying `node_meta` array.
+    /// Only present when `node_meta` is populated.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub to_node_idx: Option<usize>,
 }
 
 impl EdgeMeta {
-    /// Build `EdgeMeta` from a representative `edge` and its parent `way`.
-    ///
-    /// `edge` should be `edges.get(way.first_edge_idx)`.
-    pub fn from(edge: &Edge) -> Self {
+    pub fn from(edge: &Edge, from_node_idx: Option<usize>, to_node_idx: Option<usize>) -> Self {
         Self {
             max_speed: edge.max_speed,
             country_id: edge.country_id.to_iso2().map(str::to_owned),
@@ -149,6 +229,8 @@ impl EdgeMeta {
             no_hgv: edge.flags.contains(EdgeFlags::NO_HGV),
             no_bicycle: edge.flags.contains(EdgeFlags::NO_BICYCLE),
             no_foot: edge.flags.contains(EdgeFlags::NO_FOOT),
+            from_node_idx,
+            to_node_idx,
         }
     }
 }
