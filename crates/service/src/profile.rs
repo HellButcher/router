@@ -102,7 +102,8 @@ impl Profile {
         max_speed_kmh: 130,
         speed_table: [
             //  Unk  Mwy  Trk  Pri  Sec  Ter  MLnk TLnk PLnk SLnk TLnk Uncl Res  Liv  Svc  Trk  Rd   Ped  Ftw  Cyc  Path Brdwy Ferry Drwy PAis Ally
-            0, 110, 90, 80, 60, 50, 90, 70, 60, 50, 40, 50, 30, 10, 20, 20, 40, 0, 0, 0, 0, 0, 5, 10, 10, 15,
+            0, 110, 90, 80, 60, 50, 90, 70, 60, 50, 40, 50, 30, 10, 20, 20, 40, 0, 0, 0, 0, 0, 5,
+            10, 10, 15,
         ],
         surface_pct: [100, 100, 100, 80, 60, 40, 20, 0],
         // Typical passenger car: width ~1.9 m.
@@ -123,7 +124,8 @@ impl Profile {
         max_speed_kmh: 90,
         speed_table: [
             //  Unk  Mwy  Trk  Pri  Sec  Ter  MLnk TLnk PLnk SLnk TLnk Uncl Res  Liv  Svc  Trk  Rd   Ped  Ftw  Cyc  Path Brdwy Ferry Drwy PAis Ally
-            0, 80, 80, 70, 60, 50, 70, 60, 60, 50, 40, 50, 30, 10, 20, 20, 40, 0, 0, 0, 0, 0, 5, 10, 10, 15,
+            0, 80, 80, 70, 60, 50, 70, 60, 60, 50, 40, 50, 30, 10, 20, 20, 40, 0, 0, 0, 0, 0, 5, 10,
+            10, 15,
         ],
         surface_pct: [100, 100, 100, 85, 60, 30, 0, 0],
         // Typical European HGV: height 4.0 m, width 2.55 m, gross weight 40 t.
@@ -144,7 +146,8 @@ impl Profile {
         max_speed_kmh: 25,
         speed_table: [
             //  Unk  Mwy  Trk  Pri  Sec  Ter  MLnk TLnk PLnk SLnk TLnk Uncl Res  Liv  Svc  Trk  Rd   Ped  Ftw  Cyc  Path Brdwy Ferry Drwy PAis Ally
-            0, 0, 0, 15, 18, 18, 0, 0, 15, 18, 18, 16, 16, 10, 12, 8, 16, 6, 6, 20, 10, 4, 5, 8, 5, 10,
+            0, 0, 0, 15, 18, 18, 0, 0, 15, 18, 18, 16, 16, 10, 12, 8, 16, 6, 6, 20, 10, 4, 5, 8, 5,
+            10,
         ],
         surface_pct: [100, 100, 95, 85, 70, 50, 30, 0],
         // Typical bicycle: width ~0.6 m (handlebars).

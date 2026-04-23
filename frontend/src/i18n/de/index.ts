@@ -66,6 +66,9 @@ const de: Translation = {
         Path: "Pfad",
         Bridleway: "Reitweg",
         Ferry: "Fähre",
+        ServiceDriveway: "Einfahrt",
+        ServiceParkingAisle: "Parkplatzweg",
+        ServiceAlley: "Gasse",
       },
       surfaceQualityClass: {
         Unknown: "Unbekannt",

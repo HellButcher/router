@@ -66,6 +66,9 @@ const en = {
         Path: "Path",
         Bridleway: "Bridleway",
         Ferry: "Ferry",
+        ServiceDriveway: "Driveway",
+        ServiceParkingAisle: "Parking Aisle",
+        ServiceAlley: "Alley",
       },
       surfaceQualityClass: {
         Unknown: "Unknown",

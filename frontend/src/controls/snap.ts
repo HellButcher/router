@@ -170,12 +170,15 @@ export class SnapControl implements IControl {
     for (const id of [LOCATE_WAY_LAYER, LOCATE_SEGMENT_LAYER]) {
       if (this._map.getLayer(id)) this._map.removeLayer(id);
     }
-    if (this._map.getSource(LOCATE_SOURCE)) this._map.removeSource(LOCATE_SOURCE);
+    if (this._map.getSource(LOCATE_SOURCE))
+      this._map.removeSource(LOCATE_SOURCE);
   }
 
   /** Update the shared source with way + edge features, or clear it. */
   private _updateGeometry(info: LocateInfo | null) {
-    const src = this._map?.getSource(LOCATE_SOURCE) as GeoJSONSource | undefined;
+    const src = this._map?.getSource(LOCATE_SOURCE) as
+      | GeoJSONSource
+      | undefined;
     if (!src) return;
 
     if (!info?.nodes?.length) {
@@ -189,7 +192,10 @@ export class SnapControl implements IControl {
     if (nodes.length >= 2) {
       features.push({
         type: "Feature",
-        geometry: { type: "LineString", coordinates: nodes.map((n) => [n.lon, n.lat]) },
+        geometry: {
+          type: "LineString",
+          coordinates: nodes.map((n) => [n.lon, n.lat]),
+        },
         properties: { kind: "way" },
       });
     }
@@ -201,7 +207,13 @@ export class SnapControl implements IControl {
     if (from && to) {
       features.push({
         type: "Feature",
-        geometry: { type: "LineString", coordinates: [[from.lon, from.lat], [to.lon, to.lat]] },
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [from.lon, from.lat],
+            [to.lon, to.lat],
+          ],
+        },
         properties: { kind: "edge" },
       });
     }

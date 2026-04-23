@@ -234,6 +234,18 @@ type RootTranslation = {
 				 * F​e​r​r​y
 				 */
 				Ferry: string
+				/**
+				 * D​r​i​v​e​w​a​y
+				 */
+				ServiceDriveway: string
+				/**
+				 * P​a​r​k​i​n​g​ ​A​i​s​l​e
+				 */
+				ServiceParkingAisle: string
+				/**
+				 * A​l​l​e​y
+				 */
+				ServiceAlley: string
 			}
 			surfaceQualityClass: {
 				/**
@@ -668,6 +680,18 @@ export type TranslationFunctions = {
 				 * Ferry
 				 */
 				Ferry: () => LocalizedString
+				/**
+				 * Driveway
+				 */
+				ServiceDriveway: () => LocalizedString
+				/**
+				 * Parking Aisle
+				 */
+				ServiceParkingAisle: () => LocalizedString
+				/**
+				 * Alley
+				 */
+				ServiceAlley: () => LocalizedString
 			}
 			surfaceQualityClass: {
 				/**
