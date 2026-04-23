@@ -410,9 +410,15 @@ pub struct WayTags<'s> {
     pub tunnel: bool,
     pub bridge: bool,
     pub ferry: bool,
+    pub raw_max_speed_advisory: Option<&'s str>,
     pub raw_max_height: Option<&'s str>,
+    pub raw_max_height_physical: Option<&'s str>,
     pub raw_max_width: Option<&'s str>,
+    pub raw_max_width_physical: Option<&'s str>,
     pub raw_max_weight: Option<&'s str>,
+    pub raw_max_length: Option<&'s str>,
+    pub impassable: bool,
+    pub raw_status: Option<&'s str>,
 }
 
 /*
@@ -440,12 +446,18 @@ impl<'s> WayTags<'s> {
             "maxspeed" => self.raw_max_speed = Some(v),
             "maxspeed:forward" => self.raw_max_speed_forward = Some(v),
             "maxspeed:backward" => self.raw_max_speed_backward = Some(v),
+            "maxspeed:advisory" => self.raw_max_speed_advisory = Some(v),
             "tunnel" => self.tunnel = !matches!(v, "no" | "false"),
             "bridge" => self.bridge = !matches!(v, "no" | "false"),
             "route" => self.ferry = v == "ferry",
             "maxheight" => self.raw_max_height = Some(v),
+            "maxheight:physical" => self.raw_max_height_physical = Some(v),
             "maxwidth" => self.raw_max_width = Some(v),
+            "maxwidth:physical" => self.raw_max_width_physical = Some(v),
             "maxweight" => self.raw_max_weight = Some(v),
+            "maxlength" => self.raw_max_length = Some(v),
+            "impassable" => self.impassable = FromTag::from_tag(v),
+            "status" => self.raw_status = Some(v),
             _ => {
                 let mut k2 = k;
                 if let Some(p) = k2.find(':') {
@@ -552,6 +564,8 @@ impl<'s> WayTags<'s> {
             || self.area
             || self.disused
             || self.abandoned
+            || self.impassable
+            || self.raw_status.is_some_and(|s| s == "impassable")
     }
 }
 

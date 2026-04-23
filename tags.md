@@ -18,7 +18,12 @@ Derived data is written to `Way`, `Edge`, and `Node` structs in `lib.rs`.
 | `tunnel`, `bridge` | Stored as way flags |
 | `route=ferry` | Detected; way kept as `HighwayClass::Ferry` |
 | `maxspeed`, `maxspeed:forward`, `maxspeed:backward` | Parsed to km/h; named values (e.g. `DE:urban`) resolved |
-| `maxheight`, `maxwidth`, `maxweight` | Stored as `DimRestriction` |
+| `maxheight`, `maxheight:physical` | Stored as `DimRestriction::max_height_dm` (minimum of both) |
+| `maxwidth`, `maxwidth:physical` | Stored as `DimRestriction::max_width_dm` (minimum of both) |
+| `maxlength` | Stored as `DimRestriction::max_length_dm` |
+| `maxweight` | Stored as `DimRestriction::max_weight_250kg` |
+| `maxspeed:advisory` | Used as fallback when `maxspeed` is absent |
+| `impassable`, `status=impassable` | Excluded |
 | `surface`, `smoothness`, `tracktype` | Mapped to `SurfaceQuality` |
 | `motorroad` | Flags NO_BICYCLE + NO_FOOT |
 | `area` | Excluded |
@@ -36,29 +41,18 @@ Derived data is written to `Way`, `Edge`, and `Node` structs in `lib.rs`.
 
 ### 1. Missing exclusion conditions
 
-**Status:** Not implemented.
+**Status:** Done.
 
-**Observation:** The tags `impassable=yes` and `status=impassable` mark roads that are physically
-blocked or permanently closed but haven't been given a `highway=no` or `access=no` tag by the
-mapper.
-
-**Plan:**
-- Add `impassable: bool` and `raw_status: Option<&str>` fields to `WayTags`.
-- Extend `is_excluded()` to return `true` when `impassable` or `status=impassable`.
+`impassable=yes` and `status=impassable` are now parsed and cause `is_excluded()` to return `true`.
 
 ---
 
 ### 2. Missing physical restriction: `maxlength`
 
-**Status:** Not implemented. We store `maxheight`, `maxwidth`, `maxweight` but not length.
+**Status:** Done.
 
-**Observation:** `maxlength` restricts oversized vehicles (articulated trucks, buses).
-This is a legal restriction in many countries and matters for HGV routing.
-
-**Plan:**
-- Add `raw_max_length: Option<&str>` to `WayTags`, mirroring the existing height/width/weight fields.
-- Add `max_length_dm: u8` to `DimRestriction` (or a new field with a suitable unit).
-- Parse in `dim_restriction_from_tags` using the existing `parse_dim_m` helper.
+`maxlength` is parsed and stored as `DimRestriction::max_length_dm`. `VehicleDim` gained a matching
+`length_dm` field. Field order in both structs is height / width / length / weight.
 
 ---
 
@@ -82,27 +76,16 @@ This is a legal restriction in many countries and matters for HGV routing.
 
 #### 3b. `maxspeed:advisory`
 
-**Status:** Not read.
+**Status:** Done.
 
-**Observation:** Some mappers use `maxspeed:advisory` for recommended speeds (e.g. highway
-on-ramps) when no legal limit exists. Useful as a fallback when `maxspeed` is absent.
-
-**Plan:**
-- Add `raw_max_speed_advisory: Option<&str>` to `WayTags`.
-- In `lib.rs`, use it as fallback when `raw_max_speed` is `None`.
+Parsed and used as fallback in `lib.rs` when `maxspeed` is absent.
 
 #### 3c. `maxheight:physical` / `maxwidth:physical`
 
-**Status:** Not read; we only parse `maxheight` / `maxwidth`.
+**Status:** Done.
 
-**Observation:** The `:physical` variants encode the structural clearance (e.g. actual bridge
-opening) as opposed to the legal/posted limit. On bridges the physical clearance is often the
-binding constraint.
-
-**Plan:**
-- Add `raw_max_height_physical: Option<&str>` and `raw_max_width_physical: Option<&str>` to `WayTags`.
-- In `dim_restriction_from_tags`, take the minimum of the physical and plain values when both
-  are present.
+Both `:physical` variants are parsed. `dim_restriction_from_tags` takes the minimum of the
+physical and plain values, so the binding constraint (structural or legal) always wins.
 
 ---
 
@@ -162,15 +145,15 @@ routing weights (e.g. wider roads have higher free-flow capacity).
 
 ## Implementation Order
 
-| Priority | Item | Effort | Rationale |
-|----------|------|--------|-----------|
-| 1 | `impassable` / `status=impassable` exclusion | Small | Correctness: prevents routing through blocked roads |
-| 2 | `maxlength` | Small | Correctness: HGV routing |
-| 3 | `maxheight:physical` / `maxwidth:physical` | Small | Correctness: bridge clearance |
-| 4 | `maxspeed:advisory` fallback | Small | Speed accuracy |
-| 5 | `service` subtype speed penalties | Medium | Speed accuracy for urban routing |
-| 6 | `lanes` counts | Medium | Needed for turn:lanes interpretation |
-| 7 | String storage design | Medium (design) | Prerequisite for 8–10 |
-| 8 | `name` and `ref` | Medium | Navigation display |
-| 9 | `destination` / `destination:ref` | Medium | Sign text for guidance |
-| 10 | `turn:lanes` | Medium | Lane guidance at intersections |
+| Priority | Item | Effort | Status |
+|----------|------|--------|--------|
+| 1 | `impassable` / `status=impassable` exclusion | Small | Done |
+| 2 | `maxlength` | Small | Done |
+| 3 | `maxheight:physical` / `maxwidth:physical` | Small | Done |
+| 4 | `maxspeed:advisory` fallback | Small | Done |
+| 5 | `service` subtype speed penalties | Medium | Open |
+| 6 | `lanes` counts | Medium | Open |
+| 7 | String storage design | Medium (design) | Open — prerequisite for 8–10 |
+| 8 | `name` and `ref` | Medium | Open |
+| 9 | `destination` / `destination:ref` | Medium | Open |
+| 10 | `turn:lanes` | Medium | Open |

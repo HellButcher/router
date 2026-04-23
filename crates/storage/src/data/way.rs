@@ -35,7 +35,6 @@ pub struct Way {
     _pad_0: u8,
     /// Physical dimension restrictions (0 in any field = no restriction).
     pub dim: DimRestriction,
-    _pad_1: u8,
 }
 
 const _: () = assert!(std::mem::size_of::<Way>() == 24);
@@ -56,7 +55,6 @@ impl Way {
             highway: HighwayClass::Unknown,
             surface_quality: SurfaceQuality::Unknown,
             dim: DimRestriction::NONE,
-            _pad_1: 0,
         }
     }
 
@@ -84,5 +82,5 @@ impl TableData for Way {
 }
 
 impl Versioned for Way {
-    const VERSION: u32 = 5;
+    const VERSION: u32 = 6;
 }

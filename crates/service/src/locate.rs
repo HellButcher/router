@@ -169,8 +169,7 @@ impl Service {
                                     }
                                     (v, Some(0), Some(1))
                                 };
-                            loc.edge_meta =
-                                Some(EdgeMeta::from(&edge, from_node_idx, to_node_idx));
+                            loc.edge_meta = Some(EdgeMeta::from(&edge, from_node_idx, to_node_idx));
                             loc.way_meta = Some(WayMeta::from(&way));
                             loc.node_meta = Some(SingleOrVec::Vec(nodes));
                         }

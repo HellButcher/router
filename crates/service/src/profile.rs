@@ -8,6 +8,8 @@ pub struct VehicleDim {
     pub height_dm: u8,
     /// Vehicle width in decimetres (0.1 m). E.g. 26 = 2.6 m.
     pub width_dm: u8,
+    /// Vehicle length in decimetres (0.1 m). E.g. 120 = 12.0 m.
+    pub length_dm: u8,
     /// Vehicle weight in units of 250 kg. E.g. 160 = 40 t.
     pub weight_250kg: u8,
 }
@@ -16,6 +18,7 @@ impl VehicleDim {
     pub const NONE: Self = Self {
         height_dm: 0,
         width_dm: 0,
+        length_dm: 0,
         weight_250kg: 0,
     };
 }
@@ -105,6 +108,7 @@ impl Profile {
         vehicle_dim: VehicleDim {
             height_dm: 0,
             width_dm: 19,
+            length_dm: 0,
             weight_250kg: 0,
         },
         traffic_signal_penalty_ms: 15_000,
@@ -125,6 +129,7 @@ impl Profile {
         vehicle_dim: VehicleDim {
             height_dm: 40,
             width_dm: 26,
+            length_dm: 0,
             weight_250kg: 160,
         },
         traffic_signal_penalty_ms: 20_000,
@@ -145,6 +150,7 @@ impl Profile {
         vehicle_dim: VehicleDim {
             height_dm: 0,
             width_dm: 6,
+            length_dm: 0,
             weight_250kg: 0,
         },
         traffic_signal_penalty_ms: 10_000,

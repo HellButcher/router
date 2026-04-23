@@ -96,6 +96,7 @@ impl SpeedMap<'_> {
         if way.dim.blocks_vehicle(
             self.profile.vehicle_dim.height_dm,
             self.profile.vehicle_dim.width_dm,
+            self.profile.vehicle_dim.length_dm,
             self.profile.vehicle_dim.weight_250kg,
         ) {
             return None;

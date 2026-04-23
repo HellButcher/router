@@ -319,6 +319,7 @@ impl<R: io::BufRead + Send> Importer<R> {
                             let edge_flags = derive_edge_flags(&way_tags, highway);
                             let max_speed = way_tags
                                 .raw_max_speed
+                                .or(way_tags.raw_max_speed_advisory)
                                 .and_then(|v| tags::parse_max_speed(v, &maxspeed_map))
                                 .unwrap_or(0);
                             let max_speed_forward = way_tags
@@ -817,15 +818,18 @@ fn parse_weight_t(v: &str) -> Option<f32> {
     v.parse::<f32>().ok()
 }
 
+fn min_dim(a: Option<&str>, b: Option<&str>) -> Option<f32> {
+    match (a.and_then(parse_dim_m), b.and_then(parse_dim_m)) {
+        (Some(x), Some(y)) => Some(x.min(y)),
+        (x, y) => x.or(y),
+    }
+}
+
 fn dim_restriction_from_tags(tags: &tags::WayTags<'_>) -> DimRestriction {
-    let height_dm = tags
-        .raw_max_height
-        .and_then(parse_dim_m)
+    let height_dm = min_dim(tags.raw_max_height_physical, tags.raw_max_height)
         .map(|m| (m * 10.0).round() as u8)
         .unwrap_or(0);
-    let width_dm = tags
-        .raw_max_width
-        .and_then(parse_dim_m)
+    let width_dm = min_dim(tags.raw_max_width_physical, tags.raw_max_width)
         .map(|m| (m * 10.0).round() as u8)
         .unwrap_or(0);
     let weight_250kg = tags
@@ -833,9 +837,15 @@ fn dim_restriction_from_tags(tags: &tags::WayTags<'_>) -> DimRestriction {
         .and_then(parse_weight_t)
         .map(|t| (t * 4.0).round() as u8)
         .unwrap_or(0);
+    let length_dm = tags
+        .raw_max_length
+        .and_then(parse_dim_m)
+        .map(|m| (m * 10.0).round() as u8)
+        .unwrap_or(0);
     DimRestriction {
         max_height_dm: height_dm,
         max_width_dm: width_dm,
+        max_length_dm: length_dm,
         max_weight_250kg: weight_250kg,
     }
 }

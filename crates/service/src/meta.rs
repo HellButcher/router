@@ -2,7 +2,7 @@ use router_storage::data::{
     attrib::{HighwayClass, NodeFlags, WayFlags},
     edge::{Edge, EdgeFlags},
     node::Node,
-    way::{Way, NO_EDGE},
+    way::{NO_EDGE, Way},
 };
 
 use crate::Service;
@@ -20,7 +20,9 @@ pub struct WayTraversal {
 impl WayTraversal {
     /// Returns the position of a node in `nodes` by its storage index.
     pub fn node_pos(&self, storage_idx: usize) -> Option<usize> {
-        self.node_storage_indices.iter().position(|&i| i == storage_idx)
+        self.node_storage_indices
+            .iter()
+            .position(|&i| i == storage_idx)
     }
 }
 
@@ -33,7 +35,11 @@ impl Service {
         let mut node_storage_indices: Vec<usize> = Vec::new();
 
         let Ok(mut edge) = self.edges.get(way.first_edge_idx()) else {
-            return WayTraversal { nodes, edges, node_storage_indices };
+            return WayTraversal {
+                nodes,
+                edges,
+                node_storage_indices,
+            };
         };
 
         // Seed with the first from-node
@@ -59,11 +65,15 @@ impl Service {
             // Advance: find the outbound edge from to_idx that belongs to this way.
             // next_edge() is the *from-node* adjacency list, so we must start from
             // the to_node's outbound list, not from the current edge's next_edge.
-            let Ok(to_node) = self.nodes.get(to_idx) else { break };
+            let Ok(to_node) = self.nodes.get(to_idx) else {
+                break;
+            };
             let mut next_idx = to_node.first_edge_idx_outbound();
             let mut found = false;
             while next_idx != NO_EDGE as usize {
-                let Ok(next) = self.edges.get(next_idx) else { break };
+                let Ok(next) = self.edges.get(next_idx) else {
+                    break;
+                };
                 if next.way_idx() == way_idx {
                     edge = next;
                     found = true;
@@ -76,7 +86,11 @@ impl Service {
             }
         }
 
-        WayTraversal { nodes, edges, node_storage_indices }
+        WayTraversal {
+            nodes,
+            edges,
+            node_storage_indices,
+        }
     }
 }
 
