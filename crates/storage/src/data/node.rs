@@ -10,7 +10,7 @@ use crate::{
 
 use super::{SimpleHeader, attrib::NodeFlags};
 
-pub const NO_WAY: u64 = u64::MAX;
+pub const NO_EDGE: u64 = u64::MAX;
 
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, Default, PartialOrd, Ord, PartialEq, Eq)]
@@ -21,8 +21,8 @@ pub struct NodeId(pub i64);
 pub struct Node {
     pub id: NodeId,
     pub pos: LatLon,
-    pub(crate) first_way: AtomicU64,
-    pub(crate) first_way_reverse: AtomicU64,
+    pub(crate) first_edge_idx_outbound: AtomicU64,
+    pub(crate) first_edge_idx_inbound: AtomicU64,
     /// Access restrictions and routing hints derived from OSM node tags.
     pub flags: NodeFlags,
     _pad: [u8; 7],
@@ -40,8 +40,8 @@ impl Node {
         Self {
             id,
             pos,
-            first_way: AtomicU64::new(NO_WAY),
-            first_way_reverse: AtomicU64::new(NO_WAY),
+            first_edge_idx_outbound: AtomicU64::new(NO_EDGE),
+            first_edge_idx_inbound: AtomicU64::new(NO_EDGE),
             flags: NodeFlags::empty(),
             _pad: [0; 7],
         }
@@ -49,23 +49,26 @@ impl Node {
 
     /// Returns the linked-list pointer to the first outbound way, or [`NO_WAY`].
     #[inline]
-    pub fn first_way(&self) -> u64 {
-        self.first_way.load(std::sync::atomic::Ordering::Relaxed)
+    pub fn first_edge_idx_outbound(&self) -> usize {
+        self.first_edge_idx_outbound
+            .load(std::sync::atomic::Ordering::Relaxed) as usize
     }
 
     /// Returns the linked-list pointer to the first inbound way, or [`NO_WAY`].
     #[inline]
-    pub fn first_way_reverse(&self) -> u64 {
-        self.first_way_reverse
-            .load(std::sync::atomic::Ordering::Relaxed)
+    pub fn first_edge_idx_inbound(&self) -> usize {
+        self.first_edge_idx_inbound
+            .load(std::sync::atomic::Ordering::Relaxed) as usize
     }
 
     pub fn is_connected(&self) -> bool {
-        self.first_way.load(std::sync::atomic::Ordering::Acquire) != NO_WAY
+        self.first_edge_idx_outbound
+            .load(std::sync::atomic::Ordering::Acquire)
+            != NO_EDGE
             || self
-                .first_way_reverse
+                .first_edge_idx_inbound
                 .load(std::sync::atomic::Ordering::Acquire)
-                != NO_WAY
+                != NO_EDGE
     }
 }
 

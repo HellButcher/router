@@ -1,12 +1,14 @@
-use crate::{
-    data::Versioned,
-    pod::{Item, TablePod},
-    tablefile::TableData,
-};
+use std::sync::atomic::AtomicU64;
+
 use super::{
     SimpleHeader,
     attrib::{HighwayClass, SurfaceQuality, WayFlags},
     dim_restriction::DimRestriction,
+};
+use crate::{
+    data::Versioned,
+    pod::{Item, TablePod},
+    tablefile::TableData,
 };
 
 #[repr(transparent)]
@@ -25,16 +27,15 @@ pub struct Way {
     pub id: WayId,
     /// Index of the first [`Edge`] in `edges.bin` that references this Way.
     /// Used by the inspect API. Set to [`NO_EDGE`] until Phase 4.
-    pub first_edge_idx: u64,
+    pub first_edge_idx: AtomicU64,
     pub flags: WayFlags,
-    /// Maximum speed in km/h; 0 means use highway-class default.
-    pub max_speed: u8,
     pub highway: HighwayClass,
     /// Road surface quality tier.
     pub surface_quality: SurfaceQuality,
+    _pad_0: u8,
     /// Physical dimension restrictions (0 in any field = no restriction).
     pub dim: DimRestriction,
-    _pad: u8,
+    _pad_1: u8,
 }
 
 const _: () = assert!(std::mem::size_of::<Way>() == 24);
@@ -49,23 +50,21 @@ impl Way {
     pub const fn new(id: WayId) -> Self {
         Self {
             id,
-            first_edge_idx: NO_EDGE,
+            first_edge_idx: AtomicU64::new(NO_EDGE),
             flags: WayFlags::empty(),
-            max_speed: 0,
+            _pad_0: 0,
             highway: HighwayClass::Unknown,
             surface_quality: SurfaceQuality::Unknown,
             dim: DimRestriction::NONE,
-            _pad: 0,
+            _pad_1: 0,
         }
     }
 
+    /// Returns the index of the first edge on the way.
     #[inline]
-    pub fn effective_max_speed(&self, highway_default: u8) -> u8 {
-        if self.max_speed > 0 {
-            self.max_speed
-        } else {
-            highway_default
-        }
+    pub fn first_edge_idx(&self) -> usize {
+        self.first_edge_idx
+            .load(std::sync::atomic::Ordering::Relaxed) as usize
     }
 }
 

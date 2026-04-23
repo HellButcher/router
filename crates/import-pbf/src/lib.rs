@@ -25,6 +25,7 @@ use std::{
     fs::File,
     io::{self, BufReader},
     path::{Path, PathBuf},
+    sync::atomic::Ordering,
 };
 use thiserror::Error;
 
@@ -234,7 +235,7 @@ impl<R: io::BufRead + Send> Importer<R> {
         let maxspeed_map: HashMap<String, u8> = BUILTIN_MAXSPEED
             .iter()
             .map(|(k, v)| (k.to_string(), *v))
-            .chain(self.maxspeed.into_iter())
+            .chain(self.maxspeed)
             .collect();
 
         let mut nodes = TableFile::<Node>::open_override(self.target_dir.join("nodes.bin"))
@@ -275,7 +276,9 @@ impl<R: io::BufRead + Send> Importer<R> {
                             old_id = id.0;
                             let pos = LatLon(n.lat_deg() as f32, n.lon_deg() as f32);
                             let mut node_tags = NodeTags::default();
-                            n.tags().iter().for_each(|(k, v)| { node_tags.set_tag(k, v); });
+                            n.tags().iter().for_each(|(k, v)| {
+                                node_tags.set_tag(k, v);
+                            });
                             let mut node = Node::new(id, pos);
                             node.flags = derive_node_flags(&node_tags);
                             out_nodes.push(node);
@@ -286,7 +289,9 @@ impl<R: io::BufRead + Send> Importer<R> {
                             old_id = id.0;
                             let pos = LatLon(n.lat_deg() as f32, n.lon_deg() as f32);
                             let mut node_tags = NodeTags::default();
-                            n.tags().iter().for_each(|(k, v)| { node_tags.set_tag(k, v); });
+                            n.tags().iter().for_each(|(k, v)| {
+                                node_tags.set_tag(k, v);
+                            });
                             let mut node = Node::new(id, pos);
                             node.flags = derive_node_flags(&node_tags);
                             out_nodes.push(node);
@@ -297,7 +302,9 @@ impl<R: io::BufRead + Send> Importer<R> {
                             old_id = id;
                             let id = WayId(id);
                             let mut way_tags = WayTags::default();
-                            w.tags().iter().for_each(|(k, v)| { way_tags.set_tag(k, v); });
+                            w.tags().iter().for_each(|(k, v)| {
+                                way_tags.set_tag(k, v);
+                            });
                             if way_tags.is_excluded() {
                                 continue;
                             }
@@ -332,7 +339,6 @@ impl<R: io::BufRead + Send> Importer<R> {
                             let mut way = Way::new(id);
                             way.highway = highway;
                             way.flags = way_flags;
-                            way.max_speed = max_speed;
                             way.surface_quality = surface_quality;
                             way.dim = dim;
                             out_ways.push(way);
@@ -451,9 +457,8 @@ impl<R: io::BufRead + Send> Importer<R> {
             let ways_slice: &[Way] = &ways_slice;
             let edges_slice = edges.get_all_mut().map_err(Error::WriteError)?;
 
-            edges_slice
-                .par_iter_mut()
-                .try_for_each(|edge| -> Result<()> {
+            edges_slice.par_iter_mut().enumerate().try_for_each(
+                |(edge_idx, edge)| -> Result<()> {
                     let from_id = NodeId(edge.from_node_idx as i64);
                     let to_id = NodeId(edge.to_node_idx as i64);
                     let from_idx = nodes_slice
@@ -468,36 +473,34 @@ impl<R: io::BufRead + Send> Importer<R> {
                     edge.from_node_idx = from_idx as u64;
                     edge.to_node_idx = to_idx as u64;
 
-                    let dist_m =
-                        haversine_m(from_pos.lat, from_pos.lon, to_pos.lat, to_pos.lon)
-                            .min(u16::MAX as f32) as u16;
+                    let dist_m = haversine_m(from_pos.lat, from_pos.lon, to_pos.lat, to_pos.lon)
+                        .min(u16::MAX as f32) as u16;
 
                     let country_id = country_lookup
                         .as_ref()
                         .map(|l| l.lookup(from_pos.lat, from_pos.lon))
                         .unwrap_or(CountryId::UNKNOWN);
 
-                    let way_id = WayId(edge.way_id_raw());
+                    // way_idx is still the raw WayId at this point, so we need to look it up in the Way table to resolve it to the correct index.
+                    let way_id = WayId(edge.way_idx as i64);
                     let way_idx = ways_slice
                         .binary_search_by_key(&way_id, |w| w.id)
                         .map_err(|_| Error::WayIdNotFound(way_id))?;
 
                     edge.resolve(way_idx, dist_m, country_id);
-                    Ok(())
-                })?;
-        }
 
-        // Phase 4b: fill first_edge_idx on each Way (sequential — first edge wins).
-        tracing::info!("filling way first-edge indices");
-        {
-            let edges_slice = edges.get_all().map_err(Error::WriteError)?;
-            let ways_slice = ways.get_all_mut().map_err(Error::WriteError)?;
-            for (edge_idx, edge) in edges_slice.iter().enumerate() {
-                let way = &mut ways_slice[edge.way_idx()];
-                if way.first_edge_idx == NO_EDGE {
-                    way.first_edge_idx = edge_idx as u64;
-                }
-            }
+                    if let Some(way) = ways_slice.get(edge.way_idx()) {
+                        let _ = way.first_edge_idx.compare_exchange(
+                            NO_EDGE,
+                            edge_idx as u64,
+                            Ordering::Acquire,
+                            Ordering::Relaxed,
+                        );
+                    }
+
+                    Ok(())
+                },
+            )?;
         }
 
         tracing::info!("flushing nodes, edges, and ways");
@@ -638,10 +641,8 @@ fn derive_edge_flags(tags: &tags::WayTags<'_>, highway: HighwayClass) -> EdgeFla
     if let Cond::Simple(a) = &tags.access
         && a.is_excluded()
     {
-        flags |= EdgeFlags::NO_MOTOR
-            | EdgeFlags::NO_HGV
-            | EdgeFlags::NO_BICYCLE
-            | EdgeFlags::NO_FOOT;
+        flags |=
+            EdgeFlags::NO_MOTOR | EdgeFlags::NO_HGV | EdgeFlags::NO_BICYCLE | EdgeFlags::NO_FOOT;
     }
     if let Cond::Multi(items) = &tags.access {
         for item in items.iter().filter(|i| i.value.is_excluded()) {

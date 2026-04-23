@@ -1,12 +1,12 @@
 use std::collections::HashMap;
-use std::num::{NonZeroU32, NonZeroU64};
+use std::num::NonZeroU32;
 use std::ops::{Deref, DerefMut};
 
 use router_types::coordinate::LatLon;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::meta::{EdgeMeta, NodeMeta};
+use crate::meta::{EdgeMeta, NodeMeta, WayMeta};
 
 /// Units for distances
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -24,6 +24,38 @@ pub enum Unit {
         serde(rename = "mi", alias = "mile", alias = "miles")
     )]
     Miles,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(untagged))]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub enum SingleOrVec<T> {
+    Single(Box<T>),
+    Vec(Vec<T>),
+}
+
+impl<T> SingleOrVec<T> {
+    #[inline]
+    pub fn single(value: T) -> Self {
+        Self::Single(Box::new(value))
+    }
+
+    #[inline]
+    pub fn vec(values: Vec<T>) -> Self {
+        Self::Vec(values)
+    }
+}
+
+impl<T> Deref for SingleOrVec<T> {
+    type Target = [T];
+    #[inline(always)]
+    fn deref(&self) -> &[T] {
+        match self {
+            SingleOrVec::Single(meta) => std::slice::from_ref(meta),
+            SingleOrVec::Vec(vec) => vec,
+        }
+    }
 }
 
 /// A Location is a Point giben as latitude (lat) and longitude (lon) with additional information
@@ -44,11 +76,6 @@ pub struct Location {
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub allow_u_turns: Option<bool>,
-    #[cfg_attr(
-        feature = "serde",
-        serde(default, skip_serializing_if = "Option::is_none")
-    )]
-    pub way_id: Option<NonZeroU64>,
 
     /// Fraction along the snapped way segment (0.0 = from-node, 1.0 = to-node).
     /// Only present for [`SnapMode::Edge`] snaps.
@@ -66,15 +93,21 @@ pub struct Location {
 
     #[cfg_attr(
         feature = "serde",
-        serde(default, skip_serializing_if = "Option::is_none")
+        serde(default, skip_serializing_if = "Option::is_none", skip_deserializing)
     )]
-    pub node_meta: Option<NodeMeta>,
+    pub node_meta: Option<SingleOrVec<NodeMeta>>,
 
     #[cfg_attr(
         feature = "serde",
-        serde(default, skip_serializing_if = "Option::is_none")
+        serde(default, skip_serializing_if = "Option::is_none", skip_deserializing)
     )]
     pub edge_meta: Option<EdgeMeta>,
+
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none", skip_deserializing)
+    )]
+    pub way_meta: Option<WayMeta>,
 
     #[cfg(feature = "serde")]
     #[serde(flatten)]

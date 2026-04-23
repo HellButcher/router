@@ -5,7 +5,7 @@ use router_types::country::CountryId;
 
 use crate::{data::Versioned, pod::TablePod, tablefile::TableData};
 
-use super::{SimpleHeader, node::NO_WAY};
+use super::{SimpleHeader, node::NO_EDGE};
 
 bitflags! {
     /// Per-direction vehicle-access restrictions for a single edge.
@@ -36,7 +36,7 @@ pub struct Edge {
     pub(crate) next_edge: AtomicU64,
     pub(crate) next_edge_reverse: AtomicU64,
     /// Before Way-index resolution: raw WayId cast to u64. After: Way table index.
-    way_idx: u64,
+    pub way_idx: u64,
     /// Haversine distance in metres between from- and to-node.
     /// Set during Phase 4 resolution; 0 before that.
     pub dist_m: u16,
@@ -61,8 +61,8 @@ impl Edge {
         Self {
             from_node_idx: from,
             to_node_idx: to,
-            next_edge: AtomicU64::new(NO_WAY),
-            next_edge_reverse: AtomicU64::new(NO_WAY),
+            next_edge: AtomicU64::new(NO_EDGE),
+            next_edge_reverse: AtomicU64::new(NO_EDGE),
             way_idx: way_id_raw as u64,
             dist_m: 0,
             max_speed,
@@ -72,16 +72,20 @@ impl Edge {
         }
     }
 
-    /// Raw WayId stored during Phase 1 (before Phase 4 resolution).
-    #[inline]
-    pub fn way_id_raw(&self) -> i64 {
-        self.way_idx as i64
-    }
-
     /// Way table index (valid after Phase 4 resolution).
     #[inline]
     pub fn way_idx(&self) -> usize {
         self.way_idx as usize
+    }
+
+    #[inline]
+    pub fn from_node_idx(&self) -> usize {
+        self.from_node_idx as usize
+    }
+
+    #[inline]
+    pub fn to_node_idx(&self) -> usize {
+        self.to_node_idx as usize
     }
 
     /// Phase 4: replace raw WayId with resolved `way_idx`, and store `dist_m`
@@ -93,14 +97,14 @@ impl Edge {
     }
 
     #[inline]
-    pub fn next_edge(&self) -> u64 {
-        self.next_edge.load(std::sync::atomic::Ordering::Relaxed)
+    pub fn next_edge(&self) -> usize {
+        self.next_edge.load(std::sync::atomic::Ordering::Relaxed) as usize
     }
 
     #[inline]
-    pub fn next_edge_reverse(&self) -> u64 {
+    pub fn next_edge_reverse(&self) -> usize {
         self.next_edge_reverse
-            .load(std::sync::atomic::Ordering::Relaxed)
+            .load(std::sync::atomic::Ordering::Relaxed) as usize
     }
 }
 

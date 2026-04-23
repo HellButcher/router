@@ -40,7 +40,14 @@ impl<'a, C: CostModel> VirtualGraph<'a, C> {
             Snap::Node { node_idx, .. } => (None, *node_idx),
             Snap::Edge(e) => (Some(virtual_start_endpoint(e, &inner)), VIRTUAL_START),
         };
-        (Self { inner, start, goal: None }, start_idx)
+        (
+            Self {
+                inner,
+                start,
+                goal: None,
+            },
+            start_idx,
+        )
     }
 
     /// Build a `VirtualGraph` from two snapped waypoints.
@@ -77,17 +84,37 @@ impl<'a, C: CostModel> VirtualGraph<'a, C> {
             if frac_diff >= 0.0 {
                 // Goal is ahead of start along the edge's direction.
                 let cost = (frac_diff * full_cost as f32) as usize;
-                vs.adjacent.push(Neighbour { node: VIRTUAL_GOAL, cost });
-                vg.adjacent.push(Neighbour { node: VIRTUAL_START, cost });
+                vs.adjacent.push(Neighbour {
+                    node: VIRTUAL_GOAL,
+                    cost,
+                });
+                vg.adjacent.push(Neighbour {
+                    node: VIRTUAL_START,
+                    cost,
+                });
             } else if !way.flags.contains(WayFlags::ONEWAY) {
                 // Goal is behind start; only valid on bidirectional ways.
                 let cost = ((-frac_diff) * full_cost as f32) as usize;
-                vs.adjacent.push(Neighbour { node: VIRTUAL_GOAL, cost });
-                vg.adjacent.push(Neighbour { node: VIRTUAL_START, cost });
+                vs.adjacent.push(Neighbour {
+                    node: VIRTUAL_GOAL,
+                    cost,
+                });
+                vg.adjacent.push(Neighbour {
+                    node: VIRTUAL_START,
+                    cost,
+                });
             }
         }
 
-        (Self { inner, start: vstart, goal: vgoal }, start_idx, goal_idx)
+        (
+            Self {
+                inner,
+                start: vstart,
+                goal: vgoal,
+            },
+            start_idx,
+            goal_idx,
+        )
     }
 
     /// Resolve a node index (real or virtual sentinel) to a map position.
@@ -106,7 +133,10 @@ pub enum VirtualIter<'a, C: CostModel> {
     /// Slice of pre-built neighbours from a virtual endpoint (no allocation).
     Fixed(std::slice::Iter<'a, Neighbour>),
     /// Real node neighbours, with an optional extra neighbour injected to a virtual node.
-    Real { inner: EdgeIter<'a, C>, extra: Option<Neighbour> },
+    Real {
+        inner: EdgeIter<'a, C>,
+        extra: Option<Neighbour>,
+    },
 }
 
 impl<C: CostModel> Iterator for VirtualIter<'_, C> {
@@ -136,12 +166,18 @@ impl<C: CostModel> Graph for VirtualGraph<'_, C> {
             return VirtualIter::Fixed(EMPTY.iter());
         }
         let extra = self.goal.as_ref().and_then(|g| {
-            g.adjacent.iter().find(|e| e.node == node_idx).map(|e| Neighbour {
-                node: VIRTUAL_GOAL,
-                cost: e.cost,
-            })
+            g.adjacent
+                .iter()
+                .find(|e| e.node == node_idx)
+                .map(|e| Neighbour {
+                    node: VIRTUAL_GOAL,
+                    cost: e.cost,
+                })
         });
-        VirtualIter::Real { inner: self.inner.outbound(node_idx), extra }
+        VirtualIter::Real {
+            inner: self.inner.outbound(node_idx),
+            extra,
+        }
     }
 
     fn inbound(&self, node_idx: usize) -> VirtualIter<'_, C> {
@@ -152,17 +188,27 @@ impl<C: CostModel> Graph for VirtualGraph<'_, C> {
             return VirtualIter::Fixed(EMPTY.iter());
         }
         let extra = self.start.as_ref().and_then(|s| {
-            s.adjacent.iter().find(|e| e.node == node_idx).map(|e| Neighbour {
-                node: VIRTUAL_START,
-                cost: e.cost,
-            })
+            s.adjacent
+                .iter()
+                .find(|e| e.node == node_idx)
+                .map(|e| Neighbour {
+                    node: VIRTUAL_START,
+                    cost: e.cost,
+                })
         });
-        VirtualIter::Real { inner: self.inner.inbound(node_idx), extra }
+        VirtualIter::Real {
+            inner: self.inner.inbound(node_idx),
+            extra,
+        }
     }
 
     fn heuristic(&self, from_idx: usize, to_idx: usize) -> usize {
-        let Some(from_pos) = self.resolve_pos(from_idx) else { return 0 };
-        let Some(to_pos) = self.resolve_pos(to_idx) else { return 0 };
+        let Some(from_pos) = self.resolve_pos(from_idx) else {
+            return 0;
+        };
+        let Some(to_pos) = self.resolve_pos(to_idx) else {
+            return 0;
+        };
         self.inner.cost_model.heuristic(from_pos, to_pos)
     }
 }
@@ -179,20 +225,35 @@ fn virtual_start_endpoint<C: CostModel>(
 ) -> VirtualEndpoint {
     let mut adjacent = Vec::with_capacity(2);
     let Ok(edge) = graph.edges.get(snap.edge_idx) else {
-        return VirtualEndpoint { pos: snap.pos, adjacent };
+        return VirtualEndpoint {
+            pos: snap.pos,
+            adjacent,
+        };
     };
     let Ok(way) = graph.ways.get(edge.way_idx()) else {
-        return VirtualEndpoint { pos: snap.pos, adjacent };
+        return VirtualEndpoint {
+            pos: snap.pos,
+            adjacent,
+        };
     };
     if let Some(full_cost) = graph.cost_model.edge_cost(&edge, &way) {
         let cost_to_snap = (snap.fraction * full_cost as f32) as usize;
         let cost_from_snap = ((1.0 - snap.fraction) * full_cost as f32) as usize;
-        adjacent.push(Neighbour { node: snap.to_node_idx, cost: cost_from_snap });
+        adjacent.push(Neighbour {
+            node: snap.to_node_idx,
+            cost: cost_from_snap,
+        });
         if !way.flags.contains(WayFlags::ONEWAY) {
-            adjacent.push(Neighbour { node: snap.from_node_idx, cost: cost_to_snap });
+            adjacent.push(Neighbour {
+                node: snap.from_node_idx,
+                cost: cost_to_snap,
+            });
         }
     }
-    VirtualEndpoint { pos: snap.pos, adjacent }
+    VirtualEndpoint {
+        pos: snap.pos,
+        adjacent,
+    }
 }
 
 /// Build the inbound neighbours of a virtual goal node from a mid-edge snap.
@@ -205,18 +266,33 @@ fn virtual_goal_endpoint<C: CostModel>(
 ) -> VirtualEndpoint {
     let mut adjacent = Vec::with_capacity(2);
     let Ok(edge) = graph.edges.get(snap.edge_idx) else {
-        return VirtualEndpoint { pos: snap.pos, adjacent };
+        return VirtualEndpoint {
+            pos: snap.pos,
+            adjacent,
+        };
     };
     let Ok(way) = graph.ways.get(edge.way_idx()) else {
-        return VirtualEndpoint { pos: snap.pos, adjacent };
+        return VirtualEndpoint {
+            pos: snap.pos,
+            adjacent,
+        };
     };
     if let Some(full_cost) = graph.cost_model.edge_cost(&edge, &way) {
         let cost_to_snap = (snap.fraction * full_cost as f32) as usize;
         let cost_from_snap = ((1.0 - snap.fraction) * full_cost as f32) as usize;
-        adjacent.push(Neighbour { node: snap.from_node_idx, cost: cost_to_snap });
+        adjacent.push(Neighbour {
+            node: snap.from_node_idx,
+            cost: cost_to_snap,
+        });
         if !way.flags.contains(WayFlags::ONEWAY) {
-            adjacent.push(Neighbour { node: snap.to_node_idx, cost: cost_from_snap });
+            adjacent.push(Neighbour {
+                node: snap.to_node_idx,
+                cost: cost_from_snap,
+            });
         }
     }
-    VirtualEndpoint { pos: snap.pos, adjacent }
+    VirtualEndpoint {
+        pos: snap.pos,
+        adjacent,
+    }
 }

@@ -1,10 +1,10 @@
-use std::num::NonZeroU64;
-
+use rayon::prelude::*;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+use crate::common::SingleOrVec;
 use crate::error::Result;
-use crate::meta::{EdgeMeta, NodeMeta};
+use crate::meta::{EdgeMeta, NodeMeta, WayMeta};
 use crate::snap::EdgeSnapper;
 
 pub use super::common::Points;
@@ -107,7 +107,7 @@ impl Service {
             edge_spatial: &self.edge_spatial,
         };
 
-        for loc in &mut locations {
+        locations.par_iter_mut().for_each(|loc| {
             let _span = tracing::trace_span!("locate").entered();
             match request.snap_mode {
                 SnapMode::Node => {
@@ -119,7 +119,7 @@ impl Service {
                         if request.with_meta
                             && let Ok(node) = self.nodes.get(node_idx as usize)
                         {
-                            loc.node_meta = Some(NodeMeta::from(&node));
+                            loc.node_meta = Some(SingleOrVec::single(NodeMeta::from(&node)));
                         }
                     }
                 }
@@ -128,18 +128,26 @@ impl Service {
                         snapper.snap_to_edge(loc.lat, loc.lon, max_radius_m, restrict_to)
                     {
                         loc.coordinate = snap.pos;
-                        loc.way_id = NonZeroU64::new(snap.way_id);
                         loc.fraction = Some(snap.fraction);
                         if request.with_meta
                             && let Ok(edge) = self.edges.get(snap.edge_idx)
                             && let Ok(way) = self.ways.get(edge.way_idx())
                         {
-                            loc.edge_meta = EdgeMeta::from(&edge, &way, &self.nodes).ok();
+                            let mut nodes = Vec::with_capacity(2);
+                            if let Ok(from_node) = self.nodes.get(edge.from_node_idx()) {
+                                nodes.push(NodeMeta::from(&from_node));
+                            }
+                            if let Ok(to_node) = self.nodes.get(edge.to_node_idx()) {
+                                nodes.push(NodeMeta::from(&to_node));
+                            }
+                            loc.edge_meta = Some(EdgeMeta::from(&edge));
+                            loc.way_meta = Some(WayMeta::from(&way));
+                            loc.node_meta = Some(SingleOrVec::Vec(nodes));
                         }
                     }
                 }
             }
-        }
+        });
 
         Ok(LocateResponse {
             id: request.id,

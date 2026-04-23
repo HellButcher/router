@@ -255,7 +255,8 @@ fn compute_origin<C: CostModel + Copy>(
     for &(pair_idx, to_idx) in dest_pairs {
         let to_snap = &to_snaps[to_idx];
 
-        let Some((cost_ms, end_node)) = destination_cost(to_snap, &time_costs, edges, ways, cost_model)
+        let Some((cost_ms, end_node)) =
+            destination_cost(to_snap, &time_costs, edges, ways, cost_model)
         else {
             continue; // unreachable — omit
         };

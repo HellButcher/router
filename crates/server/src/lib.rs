@@ -155,6 +155,11 @@ impl From<RouterError> for Problem {
                 title: "Polyline Decoding Error",
                 detail,
             },
+            RouterError::NotFound(_, _) => Self {
+                status: 404,
+                title: "Not Found",
+                detail,
+            },
         }
     }
 }

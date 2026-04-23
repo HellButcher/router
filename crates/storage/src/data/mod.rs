@@ -4,7 +4,7 @@ use crate::pod::TablePod;
 
 use self::{
     edge::Edge,
-    node::{NO_WAY, Node, NodeId},
+    node::{NO_EDGE, Node, NodeId},
 };
 
 pub mod attrib;
@@ -108,13 +108,16 @@ pub fn link_nodes_and_edges(nodes: &[Node], edge_index: usize, edge: &Edge) {
     if let Ok(node_from_index) =
         nodes.binary_search_by_key(&NodeId(edge.from_node_idx as i64), |n| n.id)
     {
-        let mut current = NO_WAY;
-        while let Err(old) = nodes[node_from_index].first_way.compare_exchange(
-            current,
-            ptr,
-            std::sync::atomic::Ordering::Acquire,
-            std::sync::atomic::Ordering::Relaxed,
-        ) {
+        let mut current = NO_EDGE;
+        while let Err(old) = nodes[node_from_index]
+            .first_edge_idx_outbound
+            .compare_exchange(
+                current,
+                ptr,
+                std::sync::atomic::Ordering::Acquire,
+                std::sync::atomic::Ordering::Relaxed,
+            )
+        {
             edge.next_edge
                 .store(old, std::sync::atomic::Ordering::Release);
             current = old;
@@ -124,23 +127,19 @@ pub fn link_nodes_and_edges(nodes: &[Node], edge_index: usize, edge: &Edge) {
     if let Ok(node_to_index) =
         nodes.binary_search_by_key(&NodeId(edge.to_node_idx as i64), |n| n.id)
     {
-        let mut current = NO_WAY;
-        while let Err(old) = nodes[node_to_index].first_way_reverse.compare_exchange(
-            current,
-            ptr,
-            std::sync::atomic::Ordering::Acquire,
-            std::sync::atomic::Ordering::Relaxed,
-        ) {
+        let mut current = NO_EDGE;
+        while let Err(old) = nodes[node_to_index]
+            .first_edge_idx_inbound
+            .compare_exchange(
+                current,
+                ptr,
+                std::sync::atomic::Ordering::Acquire,
+                std::sync::atomic::Ordering::Relaxed,
+            )
+        {
             edge.next_edge_reverse
                 .store(old, std::sync::atomic::Ordering::Release);
             current = old;
         }
     }
-}
-
-/// Convert a stored linked-list pointer back to an edge table index.
-/// Returns `None` for [`NO_WAY`] (end-of-list sentinel).
-#[inline]
-pub fn edge_index_from_ptr(ptr: u64) -> Option<usize> {
-    if ptr == NO_WAY { None } else { Some(ptr as usize) }
 }

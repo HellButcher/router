@@ -13,6 +13,9 @@ pub enum Error {
     #[error("No route found between the given locations")]
     NoRoute,
 
+    #[error("{0} {1} not found")]
+    NotFound(&'static str, i64),
+
     #[error("Invalid request: {0}")]
     InvalidRequest(String),
 

@@ -1,5 +1,6 @@
-use std::num::NonZeroU64;
 use std::time::Duration;
+
+use rayon::prelude::*;
 
 use router_algorithm::{
     a_star::a_star, bidir_a_star::bidir_a_star, bidir_dijkstra::bidir_dijkstra, dikstra::dikstra,
@@ -198,47 +199,48 @@ impl Service {
         };
 
         // Snap each location.
-        let mut snaps: Vec<Snap> = Vec::with_capacity(locations.len());
-        for loc in &locations {
-            let snap = match snap_mode {
-                SnapMode::Node => self
-                    .node_spatial
-                    .nearest(loc.lat, loc.lon, self.max_radius_m)
-                    .map(|(idx, lat, lon, _)| Snap::Node {
-                        node_idx: idx as usize,
-                        pos: router_types::coordinate::LatLon(lat, lon),
-                    }),
-                SnapMode::Edge => snapper
-                    .snap_to_edge(
-                        loc.lat,
-                        loc.lon,
-                        self.max_radius_m,
-                        Some(profile.vehicle_type),
-                    )
-                    .map(Snap::Edge),
-            };
-            snaps.push(snap.ok_or_else(|| {
-                Error::InvalidRequest(format!(
-                    "no routable position found near ({}, {})",
-                    loc.lat, loc.lon
-                ))
-            })?);
-        }
+        let snaps: Vec<Snap> = locations
+            .par_iter()
+            .map(|loc| {
+                let snap = match snap_mode {
+                    SnapMode::Node => self
+                        .node_spatial
+                        .nearest(loc.lat, loc.lon, self.max_radius_m)
+                        .map(|(idx, lat, lon, _)| Snap::Node {
+                            node_idx: idx as usize,
+                            pos: router_types::coordinate::LatLon(lat, lon),
+                        }),
+                    SnapMode::Edge => snapper
+                        .snap_to_edge(
+                            loc.lat,
+                            loc.lon,
+                            self.max_radius_m,
+                            Some(profile.vehicle_type),
+                        )
+                        .map(Snap::Edge),
+                };
+                snap.ok_or_else(|| {
+                    Error::InvalidRequest(format!(
+                        "no routable position found near ({}, {})",
+                        loc.lat, loc.lon
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         // Build canonical waypoint locations from snaps.
         let snapped_locations: Vec<Location> = snaps
             .iter()
-            .map(|snap| match snap {
-                Snap::Node { node_idx, pos } => Location {
-                    id: self.nodes.get(*node_idx).ok().map(|n| n.id.0.to_string()),
+            .zip(locations)
+            .map(|(snap, loc)| match snap {
+                Snap::Node { pos, .. } => Location {
                     coordinate: *pos,
-                    ..Default::default()
+                    ..loc
                 },
                 Snap::Edge(e) => Location {
                     coordinate: e.pos,
-                    way_id: NonZeroU64::new(e.way_id),
                     fraction: Some(e.fraction),
-                    ..Default::default()
+                    ..loc
                 },
             })
             .collect();

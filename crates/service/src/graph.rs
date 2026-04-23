@@ -3,8 +3,7 @@ use router_storage::{
     data::{
         attrib::{HighwayClass, NodeFlags, WayFlags},
         edge::{Edge, EdgeFlags},
-        edge_index_from_ptr,
-        node::{NO_WAY, Node},
+        node::Node,
         way::Way,
     },
     tablefile::TableFile,
@@ -79,11 +78,7 @@ impl SpeedMap<'_> {
             return None;
         }
         // Edge max_speed overrides Way max_speed when non-zero.
-        let tag_speed = if edge.max_speed > 0 {
-            edge.max_speed
-        } else {
-            way.max_speed
-        };
+        let tag_speed = edge.max_speed;
         let speed =
             (if tag_speed > 0 { tag_speed } else { default }).min(self.profile.max_speed_kmh);
         let surface_pct = self.profile.surface_pct[way.surface_quality as usize];
@@ -175,8 +170,8 @@ impl<C: CostModel> Graph for RoadGraph<'_, C> {
             .nodes
             .get(node_idx)
             .ok()
-            .map(|n| n.first_way())
-            .unwrap_or(NO_WAY);
+            .map(|n| n.first_edge_idx_outbound())
+            .unwrap_or(usize::MAX);
         EdgeIter {
             graph: self,
             current_ptr: first_ptr,
@@ -189,8 +184,8 @@ impl<C: CostModel> Graph for RoadGraph<'_, C> {
             .nodes
             .get(node_idx)
             .ok()
-            .map(|n| n.first_way_reverse())
-            .unwrap_or(NO_WAY);
+            .map(|n| n.first_edge_idx_inbound())
+            .unwrap_or(usize::MAX);
         EdgeIter {
             graph: self,
             current_ptr: first_ptr,
@@ -217,7 +212,7 @@ impl<C: CostModel> Graph for RoadGraph<'_, C> {
 
 pub struct EdgeIter<'a, C: CostModel> {
     graph: &'a RoadGraph<'a, C>,
-    current_ptr: u64,
+    current_ptr: usize,
     reverse: bool,
 }
 
@@ -226,7 +221,10 @@ impl<C: CostModel> Iterator for EdgeIter<'_, C> {
 
     fn next(&mut self) -> Option<Neighbour> {
         loop {
-            let edge_idx = edge_index_from_ptr(self.current_ptr)?;
+            let edge_idx = self.current_ptr;
+            if edge_idx == usize::MAX {
+                return None;
+            }
             let edge = match self.graph.edges.get(edge_idx) {
                 Ok(e) => e,
                 Err(err) => {
@@ -241,12 +239,10 @@ impl<C: CostModel> Iterator for EdgeIter<'_, C> {
                 edge.next_edge()
             };
 
-            let way_from_idx = way.from_node_idx as usize;
-            let way_to_idx = way.to_node_idx as usize;
             let neighbour_idx = if self.reverse {
-                edge.from_node_idx as usize
+                edge.from_node_idx()
             } else {
-                edge.to_node_idx as usize
+                edge.to_node_idx()
             };
 
             let way = match self.graph.ways.get(edge.way_idx()) {
@@ -260,9 +256,9 @@ impl<C: CostModel> Iterator for EdgeIter<'_, C> {
             let Some(edge_cost) = self.graph.cost_model.edge_cost(&edge, &way) else {
                 continue;
             };
-            let neighbour_ref = self.graph.nodes.get(neighbour_idx).ok();
-            let node_penalty = match neighbour_ref.as_deref() {
-                Some(n) => match self.graph.cost_model.node_cost(n) {
+
+            let node_penalty = match self.graph.nodes.get(neighbour_idx).ok() {
+                Some(n) => match self.graph.cost_model.node_cost(&n) {
                     Some(p) => p,
                     None => continue,
                 },
