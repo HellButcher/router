@@ -13,8 +13,7 @@ import {
   ScaleControl,
   setWorkerUrl,
 } from "maplibre-gl";
-
-import type { LocalizedString } from "typesafe-i18n";
+import { FLAG_ICONS } from "./flag-icons.js";
 import { initLocale, LL } from "./i18n/index.js";
 
 class ToolGroupControl implements IControl {
@@ -220,33 +219,31 @@ function translateSurfaceQuality(raw: string): string {
 function wayFlagList(
   way: NonNullable<LocateInfo["way"]>,
   edge?: LocateInfo["edge"],
-): LocalizedString[] {
+) {
   const t = LL().locate.wayFlags;
   return [
-    way.oneway ? t.oneway() : null,
-    edge?.no_motor ? t.noMotor() : null,
-    edge?.no_bicycle ? t.noBicycle() : null,
-    edge?.no_foot ? t.noFoot() : null,
-    edge?.no_hgv ? t.noHgv() : null,
-    way.toll ? t.toll() : null,
-    way.tunnel ? t.tunnel() : null,
-    way.bridge ? t.bridge() : null,
-    way.ferry ? t.ferry() : null,
-  ].filter((f): f is LocalizedString => f !== null);
+    way.oneway ? FLAG_ICONS.oneway(t.oneway()) : null,
+    edge?.no_motor ? FLAG_ICONS.noMotor(t.noMotor()) : null,
+    edge?.no_bicycle ? FLAG_ICONS.noBicycle(t.noBicycle()) : null,
+    edge?.no_foot ? FLAG_ICONS.noFoot(t.noFoot()) : null,
+    edge?.no_hgv ? FLAG_ICONS.noHgv(t.noHgv()) : null,
+    way.toll ? FLAG_ICONS.toll(t.toll()) : null,
+    way.tunnel ? FLAG_ICONS.tunnel(t.tunnel()) : null,
+    way.bridge ? FLAG_ICONS.bridge(t.bridge()) : null,
+    way.ferry ? FLAG_ICONS.ferry(t.ferry()) : null,
+  ].filter((f) => f !== null);
 }
 
-function nodeFlagList(
-  node: NonNullable<LocateInfo["node"]>,
-): LocalizedString[] {
+function nodeFlagList(node: NonNullable<LocateInfo["node"]>) {
   const t = LL().locate.nodeFlags;
   return [
-    node.no_motor ? t.noMotor() : null,
-    node.no_hgv ? t.noHgv() : null,
-    node.no_bicycle ? t.noBicycle() : null,
-    node.no_foot ? t.noFoot() : null,
-    node.traffic_signals ? t.trafficSignals() : null,
-    node.toll ? t.toll() : null,
-  ].filter((f): f is LocalizedString => f !== null);
+    node.no_motor ? FLAG_ICONS.noMotor(t.noMotor()) : null,
+    node.no_hgv ? FLAG_ICONS.noHgv(t.noHgv()) : null,
+    node.no_bicycle ? FLAG_ICONS.noBicycle(t.noBicycle()) : null,
+    node.no_foot ? FLAG_ICONS.noFoot(t.noFoot()) : null,
+    node.traffic_signals ? FLAG_ICONS.trafficSignals(t.trafficSignals()) : null,
+    node.toll ? FLAG_ICONS.toll(t.toll()) : null,
+  ].filter((f) => f !== null);
 }
 
 function unitLabel(unit: IsochroneUnit): string {
@@ -464,7 +461,7 @@ function sidebarTemplate() {
               <div class="locate-info-row"><span>${t.locate.inspect.osmNodeId()}</span><span>${locateInfo.node.id}</span></div>
               <div class="locate-info-row"><span>${t.locate.inspect.lat()}</span><span>${locateInfo.node.lat.toFixed(6)}</span></div>
               <div class="locate-info-row"><span>${t.locate.inspect.lon()}</span><span>${locateInfo.node.lon.toFixed(6)}</span></div>
-              ${nodeFlagList(locateInfo.node).length > 0 ? html`<div class="locate-info-row"><span>${t.locate.inspect.nodeFlags()}</span><span>${nodeFlagList(locateInfo.node).join(", ")}</span></div>` : ""}
+              ${nodeFlagList(locateInfo.node).length > 0 ? html`<div class="locate-info-row"><span>${t.locate.inspect.nodeFlags()}</span><span class="flag-icon-list">${nodeFlagList(locateInfo.node)}</span></div>` : ""}
             `
                 : ""
             }
@@ -478,7 +475,7 @@ function sidebarTemplate() {
               ${locateInfo.edge?.country_id ? html`<div class="locate-info-row"><span>${t.locate.inspect.country()}</span><span>${locateInfo.edge.country_id}</span></div>` : ""}
               ${locateInfo.edge ? html`<div class="locate-info-row"><span>${t.locate.inspect.distM()}</span><span>${t.locate.inspect.distMValue({ dist: locateInfo.edge.dist_m })}</span></div>` : ""}
               ${locateInfo.location.fraction != null ? html`<div class="locate-info-row"><span>${t.locate.inspect.fraction()}</span><span>${locateInfo.location.fraction.toFixed(3)}</span></div>` : ""}
-              ${wayFlagList(locateInfo.way, locateInfo.edge).length > 0 ? html`<div class="locate-info-row"><span>${t.locate.inspect.flags()}</span><span>${wayFlagList(locateInfo.way, locateInfo.edge).join(", ")}</span></div>` : ""}
+              ${wayFlagList(locateInfo.way, locateInfo.edge).length > 0 ? html`<div class="locate-info-row"><span>${t.locate.inspect.flags()}</span><span class="flag-icon-list">${wayFlagList(locateInfo.way, locateInfo.edge)}</span></div>` : ""}
               ${locateInfo.way.max_height_cm ? html`<div class="locate-info-row"><span>${t.locate.inspect.maxHeight()}</span><span>${t.locate.inspect.cmValue({ val: locateInfo.way.max_height_cm, m: locateInfo.way.max_height_cm / 100 })}</span></div>` : ""}
               ${locateInfo.way.max_width_cm ? html`<div class="locate-info-row"><span>${t.locate.inspect.maxWidth()}</span><span>${t.locate.inspect.cmValue({ val: locateInfo.way.max_width_cm, m: locateInfo.way.max_width_cm / 100 })}</span></div>` : ""}
               ${locateInfo.way.max_weight_kg ? html`<div class="locate-info-row"><span>${t.locate.inspect.maxWeight()}</span><span>${t.locate.inspect.weightKgValue({ val: locateInfo.way.max_weight_kg, t: locateInfo.way.max_weight_kg / 1000 })}</span></div>` : ""}

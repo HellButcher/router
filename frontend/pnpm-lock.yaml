@@ -14,6 +14,9 @@ importers:
       lit-html:
         specifier: ^3.3.2
         version: 3.3.2
+      lucide:
+        specifier: ^1.8.0
+        version: 1.8.0
       maplibre-gl:
         specifier: ^5.21.1
         version: 5.21.1
@@ -627,6 +630,9 @@ packages:
 
   lit-html@3.3.2:
     resolution: {integrity: sha512-Qy9hU88zcmaxBXcc10ZpdK7cOLXvXpRoBxERdtqV9QOrfpMZZ6pSYP91LhpPtap3sFMUiL7Tw2RImbe0Al2/kw==}
+
+  lucide@1.8.0:
+    resolution: {integrity: sha512-JjV/QnadgFLj1Pyu9IKl0lknrolFEzo04B64QcYLLeRzZl/iEHpdbSrRRKbyXcv45SZNv+WGjIUCT33e7xHO6Q==}
 
   maplibre-gl@5.21.1:
     resolution: {integrity: sha512-zto1RTnFkOpOO1bm93ElCXF1huey2N4LvXaGLMFcYAu9txh0OhGIdX1q3LZLkrMKgMxMeYduaQo+DVNzg098fg==}
@@ -1251,6 +1257,8 @@ snapshots:
   lit-html@3.3.2:
     dependencies:
       '@types/trusted-types': 2.0.7
+
+  lucide@1.8.0: {}
 
   maplibre-gl@5.21.1:
     dependencies:

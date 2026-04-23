@@ -52,7 +52,27 @@ body {
   color: var(--text-color);
 
   /* Reset all descendants, then re-style explicitly */
-  * {
+  div,
+  span,
+  p,
+  a,
+  button,
+  input,
+  select,
+  option,
+  label,
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  header,
+  footer,
+  section,
+  ul,
+  ol,
+  li {
     all: unset;
     box-sizing: border-box;
   }
@@ -203,20 +223,6 @@ body {
     border-bottom: 1px solid var(--border);
   }
 
-  .route-option-label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 0.82em;
-    color: var(--text-color);
-    cursor: pointer;
-    padding: 3px 0;
-
-    &:hover input[type="checkbox"] {
-      border-color: var(--accent);
-    }
-  }
-
   input[type="checkbox"] {
     display: inline-flex;
     align-items: center;
@@ -245,6 +251,20 @@ body {
     &:focus-visible {
       outline: 2px solid var(--accent);
       outline-offset: 1px;
+    }
+  }
+
+  .route-option-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.82em;
+    color: var(--text-color);
+    cursor: pointer;
+    padding: 3px 0;
+
+    &:hover input[type="checkbox"] {
+      border-color: var(--accent);
     }
   }
 
@@ -406,6 +426,34 @@ body {
       text-align: right;
       font-variant-numeric: tabular-nums;
       word-break: break-all;
+    }
+  }
+
+  .flag-icon-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    justify-content: flex-end;
+  }
+
+  .flag-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    background: var(--subtle);
+    cursor: default;
+    color: var(--text-color);
+
+    &.flag-prohibited {
+      background: rgba(239, 68, 68, 0.08);
+      color: var(--danger);
+    }
+
+    svg {
+      display: block;
     }
   }
 

@@ -26,6 +26,7 @@
   "dependencies": {
     "@protomaps/basemaps": "^5.7.2",
     "lit-html": "^3.3.2",
+    "lucide": "^1.8.0",
     "maplibre-gl": "^5.21.1",
     "openapi-fetch": "^0.17.0",
     "pmtiles": "^4.4.0",
