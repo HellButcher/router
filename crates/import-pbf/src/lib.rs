@@ -311,7 +311,7 @@ impl<R: io::BufRead + Send> Importer<R> {
                             let highway = if way_tags.ferry {
                                 HighwayClass::Ferry
                             } else {
-                                highway_class(way_tags.highway)
+                                highway_class(way_tags.highway, way_tags.service)
                             };
                             let surface_quality = surface_quality(&way_tags);
                             let dim = dim_restriction_from_tags(&way_tags);
@@ -574,8 +574,16 @@ impl<R: io::BufRead + Send> Importer<R> {
     }
 }
 
-fn highway_class(highway: Option<tags::Highway>) -> HighwayClass {
+fn highway_class(highway: Option<tags::Highway>, service: Option<tags::Service>) -> HighwayClass {
     use tags::Highway as H;
+    if matches!(highway, Some(H::service)) {
+        return match service {
+            Some(tags::Service::driveway) => HighwayClass::ServiceDriveway,
+            Some(tags::Service::parking_aisle) => HighwayClass::ServiceParkingAisle,
+            Some(tags::Service::alley) => HighwayClass::ServiceAlley,
+            _ => HighwayClass::Service,
+        };
+    }
     match highway {
         Some(H::motorway) => HighwayClass::Motorway,
         Some(H::trunk) => HighwayClass::Trunk,

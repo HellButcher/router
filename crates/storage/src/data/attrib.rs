@@ -71,6 +71,9 @@ pub enum HighwayClass {
     Path = 20,
     Bridleway = 21,
     Ferry = 22,
+    ServiceDriveway = 23,
+    ServiceParkingAisle = 24,
+    ServiceAlley = 25,
 }
 
 unsafe impl bytemuck::Zeroable for HighwayClass {}
@@ -78,7 +81,7 @@ unsafe impl bytemuck::Pod for HighwayClass {}
 
 impl HighwayClass {
     /// Number of `HighwayClass` variants.
-    pub const COUNT: usize = 23;
+    pub const COUNT: usize = 26;
 
     pub fn name(self) -> &'static str {
         match self {
@@ -105,6 +108,9 @@ impl HighwayClass {
             Self::Path => "path",
             Self::Bridleway => "bridleway",
             Self::Ferry => "ferry",
+            Self::ServiceDriveway => "service_driveway",
+            Self::ServiceParkingAisle => "service_parking_aisle",
+            Self::ServiceAlley => "service_alley",
         }
     }
 
@@ -133,6 +139,9 @@ impl HighwayClass {
             "path" => Some(Self::Path),
             "bridleway" => Some(Self::Bridleway),
             "ferry" => Some(Self::Ferry),
+            "service_driveway" => Some(Self::ServiceDriveway),
+            "service_parking_aisle" => Some(Self::ServiceParkingAisle),
+            "service_alley" => Some(Self::ServiceAlley),
             _ => None,
         }
     }

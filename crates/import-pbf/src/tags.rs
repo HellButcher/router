@@ -230,6 +230,14 @@ define_tag_enum! {
 }
 
 define_tag_enum! {
+    pub enum Service {
+        driveway,
+        parking_aisle,
+        alley,
+    }
+}
+
+define_tag_enum! {
     pub enum Barrier {
         /// Blocks motor vehicles and HGV; bicycles and pedestrians can still pass.
         bollard | block | chain | jersey_barrier | log | planter | rope | spikes,
@@ -399,6 +407,7 @@ pub struct WayTags<'s> {
     pub tracktype: Option<TrackType>,
     pub junction: Option<Junction>,
     pub motorroad: bool,
+    pub service: Option<Service>,
     pub area: bool,
     pub disused: bool,
     pub abandoned: bool,
@@ -440,6 +449,7 @@ impl<'s> WayTags<'s> {
             "tracktype" => self.tracktype = FromTag::from_tag(v),
             "junction" => self.junction = FromTag::from_tag(v),
             "motorroad" => self.motorroad = FromTag::from_tag(v),
+            "service" => self.service = FromTag::from_tag(v),
             "area" => self.area = FromTag::from_tag(v),
             "disused" => self.disused = FromTag::from_tag(v),
             "abandoned" => self.abandoned = FromTag::from_tag(v),

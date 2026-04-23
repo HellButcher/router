@@ -60,19 +60,11 @@ Derived data is written to `Way`, `Edge`, and `Node` structs in `lib.rs`.
 
 #### 3a. `service` subtype
 
-**Status:** `highway=service` is recognised as a class, but the `service` tag value is not read.
+**Status:** Done.
 
-**Observation:** Service roads differ significantly in speed by subtype:
-- `driveway` → very slow (e.g. 10 km/h)
-- `parking_aisle` → very slow
-- `alley` → moderate
-- default → moderate
-
-**Plan:**
-- Add a `Service` tag enum (`driveway`, `parking_aisle`, `alley`, `drive_through`) to `tags.rs`.
-- Add `service: Option<Service>` to `WayTags`.
-- In `lib.rs`, use the service value to cap `max_speed` on `highway=service` ways, or store it
-  in a new `WayFlags` bit or as part of the `Way` struct for later use by the routing profile.
+`service=driveway/parking_aisle/alley` are mapped to dedicated `HighwayClass` variants
+(`ServiceDriveway`, `ServiceParkingAisle`, `ServiceAlley`), each with their own speed table
+entries per profile. Unknown service subtypes fall back to `HighwayClass::Service`.
 
 #### 3b. `maxspeed:advisory`
 
@@ -151,7 +143,7 @@ routing weights (e.g. wider roads have higher free-flow capacity).
 | 2 | `maxlength` | Small | Done |
 | 3 | `maxheight:physical` / `maxwidth:physical` | Small | Done |
 | 4 | `maxspeed:advisory` fallback | Small | Done |
-| 5 | `service` subtype speed penalties | Medium | Open |
+| 5 | `service` subtype speed penalties | Medium | Done |
 | 6 | `lanes` counts | Medium | Open |
 | 7 | String storage design | Medium (design) | Open — prerequisite for 8–10 |
 | 8 | `name` and `ref` | Medium | Open |
