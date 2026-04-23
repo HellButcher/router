@@ -37,7 +37,7 @@ clap_mangen = "0.3"
 anyhow = "1.0"
 
 # Parallelism
-rayon = "1.10"
+rayon = "1.12"
 
 # Data structures & utilities
 bitflags = "2.11"

@@ -12,7 +12,7 @@ bytemuck.workspace = true
 crossbeam-queue.workspace = true
 crossbeam-channel.workspace = true
 memmap2 = "0.9"
-rayon = "1.11"
+rayon = "1.12"
 tracing.workspace = true
 
 router-types = { workspace = true, features = ["bytemuck"] }
