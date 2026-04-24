@@ -27,17 +27,16 @@ fn spread(mut v: u64) -> u64 {
 /// Default sort-chunk size: 16 M entries × 16 bytes ≈ 256 MB RAM per chunk.
 pub const DEFAULT_CHUNK_SIZE: usize = 16 * 1024 * 1024;
 
-/// External-sort `count` items by Morton key, streaming sorted old indices to
-/// `output` in ascending Morton order.
+/// External-sort `count` items by an arbitrary `u64` key, streaming sorted
+/// old indices to `output` in ascending key order.
 ///
-/// `get_pos(i)` returns `(lat, lon)` for item `i`. `scratch` is created,
-/// used as the external-sort run file, and deleted on completion (even on
-/// error, best-effort). `chunk_size` controls how many entries are sorted
-/// in-memory per rayon chunk; see [`DEFAULT_CHUNK_SIZE`].
-pub fn sort_by_morton(
+/// `scratch` is created, used as the external-sort run file, and deleted on
+/// completion (even on error, best-effort). `chunk_size` controls how many
+/// entries are sorted in-memory per rayon chunk; see [`DEFAULT_CHUNK_SIZE`].
+pub fn sort_by_key(
     count: usize,
     chunk_size: usize,
-    get_pos: impl Fn(usize) -> (f32, f32) + Sync,
+    get_key: impl Fn(usize) -> u64 + Sync,
     scratch: &Path,
     output: impl FnMut(u64) -> io::Result<()>,
 ) -> io::Result<()> {
@@ -47,17 +46,31 @@ pub fn sort_by_morton(
         .create(true)
         .truncate(true)
         .open(scratch)?;
+    let result = crate::extsort::sort_and_merge(count, chunk_size, get_key, run_file, output);
+    let _ = std::fs::remove_file(scratch);
+    result
+}
 
-    let result = crate::extsort::sort_and_merge(
+/// External-sort `count` items by Morton key, streaming sorted old indices to
+/// `output` in ascending Morton order.
+///
+/// `get_pos(i)` returns `(lat, lon)` for item `i`. See [`sort_by_key`] for
+/// parameter semantics.
+pub fn sort_by_morton(
+    count: usize,
+    chunk_size: usize,
+    get_pos: impl Fn(usize) -> (f32, f32) + Sync,
+    scratch: &Path,
+    output: impl FnMut(u64) -> io::Result<()>,
+) -> io::Result<()> {
+    sort_by_key(
         count,
         chunk_size,
         |i| {
             let (lat, lon) = get_pos(i);
             morton_world(lat, lon)
         },
-        run_file,
+        scratch,
         output,
-    );
-    let _ = std::fs::remove_file(scratch);
-    result
+    )
 }

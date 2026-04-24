@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 rayon = "1.11"
+memmap2 = "0.9"
 tracing.workspace = true
 bitflags.workspace = true
 crossbeam-channel.workspace = true

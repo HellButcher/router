@@ -13,10 +13,11 @@ use router_storage::{
         edge::{Edge, EdgeFlags},
         link_nodes_and_edges,
         node::{Node, NodeId},
+        remap_adjacency_lists,
         way::{Way, WayId},
     },
     idindex::IdEntry,
-    morton::{DEFAULT_CHUNK_SIZE, sort_by_morton},
+    morton::{DEFAULT_CHUNK_SIZE, sort_by_key, sort_by_morton},
     spatial::SpatialIndexBuilder,
     spatial::haversine_m,
     tablefile::TableFile,
@@ -629,10 +630,74 @@ impl<R: io::BufRead + Send> Importer<R> {
             drop(nodes);
             std::fs::rename(&reordered_path, self.target_dir.join("nodes.bin"))
                 .map_err(Error::WriteError)?;
-            nodes = TableFile::<Node>::open_read_only(self.target_dir.join("nodes.bin"))
+            nodes = TableFile::<Node>::open(self.target_dir.join("nodes.bin"))
                 .map_err(Error::WriteError)?;
 
             tracing::info!(count, "nodes Morton-sorted");
+        }
+
+        {
+            let _span = tracing::info_span!("morton_sort_edges").entered();
+
+            let edges_ref = edges.get_all().map_err(Error::WriteError)?;
+            let edges_slice: &[Edge] = &edges_ref;
+            let count = edges_slice.len();
+
+            // Sort edges by from_node_idx — already a Morton-ordered node
+            // position, so nearby nodes' outbound edges cluster together.
+            let reordered_path = self.target_dir.join("edges_reordered.bin");
+            let scratch = self.target_dir.join("edges.sort.tmp");
+
+            // Allocate anonymous mmap as flat u64 array: remap[old_idx] = new_idx.
+            let mut remap_mmap =
+                memmap2::MmapMut::map_anon(count * 8).map_err(Error::WriteError)?;
+            // Safety: map_anon returns count*8 zero-initialised bytes.
+            let remap: &mut [u64] = unsafe {
+                std::slice::from_raw_parts_mut(remap_mmap.as_mut_ptr() as *mut u64, count)
+            };
+
+            let mut new_edge_idx: u64 = 0;
+            TableFile::<Edge>::create_with_capacity(&reordered_path, count, |entries| {
+                sort_by_key(
+                    count,
+                    DEFAULT_CHUNK_SIZE,
+                    |i| edges_slice[i].from_node_idx,
+                    &scratch,
+                    |old_idx| {
+                        // Safety: same as node reorder — single-threaded callback,
+                        // no aliasing across indices.
+                        entries[new_edge_idx as usize] =
+                            unsafe { std::ptr::read(&edges_slice[old_idx as usize]) };
+                        remap[old_idx as usize] = new_edge_idx;
+                        new_edge_idx += 1;
+                        Ok(())
+                    },
+                )
+            })
+            .map_err(Error::WriteError)?;
+
+            drop(edges_ref);
+            drop(edges);
+            std::fs::rename(&reordered_path, self.target_dir.join("edges.bin"))
+                .map_err(Error::WriteError)?;
+            edges = TableFile::<Edge>::open(self.target_dir.join("edges.bin"))
+                .map_err(Error::WriteError)?;
+
+            // Remap all adjacency pointers through the old→new edge index map.
+            {
+                let _span = tracing::info_span!("remap_adjacency_lists").entered();
+                let nodes_ref = nodes.get_all_mut().map_err(Error::WriteError)?;
+                let edges_ref = edges.get_all_mut().map_err(Error::WriteError)?;
+                let ways_ref = ways.get_all_mut().map_err(Error::WriteError)?;
+                remap_adjacency_lists(&nodes_ref, &edges_ref, &ways_ref, remap);
+                nodes.flush().map_err(Error::WriteError)?;
+                ways.flush().map_err(Error::WriteError)?;
+            }
+
+            drop(remap_mmap);
+            edges.flush().map_err(Error::WriteError)?;
+
+            tracing::info!(count, "edges Morton-sorted");
         }
 
         tracing::info!("building spatial indices");
@@ -659,7 +724,7 @@ impl<R: io::BufRead + Send> Importer<R> {
             {
                 let _span = tracing::info_span!("build_edge_spatial_index").entered();
                 SpatialIndexBuilder::new()
-                    .build(
+                    .build_presorted(
                         edges_s.len(),
                         |i| {
                             let from = nodes_s[edges_s[i].from_node_idx as usize].pos;

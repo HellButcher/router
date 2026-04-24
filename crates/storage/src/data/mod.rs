@@ -178,38 +178,113 @@ pub fn link_nodes_and_edges(nodes: &[Node], edge_index: usize, edge: &Edge) {
     if let Ok(node_from_index) =
         nodes.binary_search_by_key(&NodeId(edge.from_node_idx as i64), |n| n.id)
     {
-        let mut current = NO_EDGE;
-        while let Err(old) = nodes[node_from_index]
-            .first_edge_idx_outbound
-            .compare_exchange(
-                current,
-                ptr,
-                std::sync::atomic::Ordering::Acquire,
-                std::sync::atomic::Ordering::Relaxed,
-            )
-        {
-            edge.next_edge
-                .store(old, std::sync::atomic::Ordering::Release);
-            current = old;
-        }
+        prepend_edge_outbound(&nodes[node_from_index], ptr, edge);
     }
 
     if let Ok(node_to_index) =
         nodes.binary_search_by_key(&NodeId(edge.to_node_idx as i64), |n| n.id)
     {
-        let mut current = NO_EDGE;
-        while let Err(old) = nodes[node_to_index]
-            .first_edge_idx_inbound
-            .compare_exchange(
-                current,
-                ptr,
-                std::sync::atomic::Ordering::Acquire,
-                std::sync::atomic::Ordering::Relaxed,
-            )
-        {
-            edge.next_edge_reverse
-                .store(old, std::sync::atomic::Ordering::Release);
-            current = old;
+        prepend_edge_inbound(&nodes[node_to_index], ptr, edge);
+    }
+}
+
+/// Remap all adjacency edge-index pointers through `remap[old] = new`.
+///
+/// Use after an edge reorder instead of [`rebuild_adjacency_lists`] when the
+/// linked-list structure is still valid but every stored edge index needs to be
+/// translated to its new position.
+pub fn remap_adjacency_lists(
+    nodes: &[Node],
+    edges: &[Edge],
+    ways: &[crate::data::way::Way],
+    remap: &[u64],
+) {
+    use rayon::prelude::*;
+    use std::sync::atomic::Ordering::Relaxed;
+
+    let remap_fn = |old: u64| -> u64 {
+        if old == NO_EDGE {
+            NO_EDGE
+        } else {
+            remap[old as usize]
         }
+    };
+
+    nodes.par_iter().for_each(|node| {
+        node.first_edge_idx_outbound
+            .fetch_update(Relaxed, Relaxed, |v| Some(remap_fn(v)))
+            .unwrap();
+        node.first_edge_idx_inbound
+            .fetch_update(Relaxed, Relaxed, |v| Some(remap_fn(v)))
+            .unwrap();
+    });
+    edges.par_iter().for_each(|edge| {
+        edge.next_edge
+            .fetch_update(Relaxed, Relaxed, |v| Some(remap_fn(v)))
+            .unwrap();
+        edge.next_edge_reverse
+            .fetch_update(Relaxed, Relaxed, |v| Some(remap_fn(v)))
+            .unwrap();
+    });
+    ways.par_iter().for_each(|way| {
+        way.first_edge_idx
+            .fetch_update(Relaxed, Relaxed, |v| Some(remap_fn(v)))
+            .unwrap();
+    });
+}
+
+/// Rebuild all adjacency linked lists after a reorder where
+/// `edge.from_node_idx` / `edge.to_node_idx` are already direct table indices.
+///
+/// Clears all node head pointers and edge next pointers in parallel, then
+/// relinks every edge sequentially via lock-free CAS prepend.
+pub fn rebuild_adjacency_lists(nodes: &[Node], edges: &[Edge]) {
+    use rayon::prelude::*;
+
+    nodes.par_iter().for_each(|node| {
+        node.first_edge_idx_outbound
+            .store(NO_EDGE, std::sync::atomic::Ordering::Relaxed);
+        node.first_edge_idx_inbound
+            .store(NO_EDGE, std::sync::atomic::Ordering::Relaxed);
+    });
+    edges.par_iter().for_each(|edge| {
+        edge.next_edge
+            .store(NO_EDGE, std::sync::atomic::Ordering::Relaxed);
+        edge.next_edge_reverse
+            .store(NO_EDGE, std::sync::atomic::Ordering::Relaxed);
+    });
+
+    edges.par_iter().enumerate().for_each(|(i, edge)| {
+        let ptr = i as u64;
+        prepend_edge_outbound(&nodes[edge.from_node_idx as usize], ptr, edge);
+        prepend_edge_inbound(&nodes[edge.to_node_idx as usize], ptr, edge);
+    });
+}
+
+fn prepend_edge_outbound(node: &Node, ptr: u64, edge: &Edge) {
+    let mut current = NO_EDGE;
+    while let Err(old) = node.first_edge_idx_outbound.compare_exchange(
+        current,
+        ptr,
+        std::sync::atomic::Ordering::Acquire,
+        std::sync::atomic::Ordering::Relaxed,
+    ) {
+        edge.next_edge
+            .store(old, std::sync::atomic::Ordering::Release);
+        current = old;
+    }
+}
+
+fn prepend_edge_inbound(node: &Node, ptr: u64, edge: &Edge) {
+    let mut current = NO_EDGE;
+    while let Err(old) = node.first_edge_idx_inbound.compare_exchange(
+        current,
+        ptr,
+        std::sync::atomic::Ordering::Acquire,
+        std::sync::atomic::Ordering::Relaxed,
+    ) {
+        edge.next_edge_reverse
+            .store(old, std::sync::atomic::Ordering::Release);
+        current = old;
     }
 }

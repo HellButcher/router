@@ -1441,6 +1441,7 @@ dependencies = [
  "crossbeam-channel",
  "geo",
  "geojson",
+ "memmap2",
  "osm-pbf-reader",
  "rayon",
  "router-storage",
