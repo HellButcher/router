@@ -689,7 +689,7 @@ impl<R: io::BufRead + Send> Importer<R> {
                 let nodes_ref = nodes.get_all_mut().map_err(Error::WriteError)?;
                 let edges_ref = edges.get_all_mut().map_err(Error::WriteError)?;
                 let ways_ref = ways.get_all_mut().map_err(Error::WriteError)?;
-                remap_adjacency_lists(&nodes_ref, &edges_ref, &ways_ref, remap);
+                remap_adjacency_lists(nodes_ref, edges_ref, ways_ref, remap);
                 nodes.flush().map_err(Error::WriteError)?;
                 ways.flush().map_err(Error::WriteError)?;
             }

@@ -1,4 +1,4 @@
-# Storage Layer — Data Structures and Refactoring Plan
+# Storage Layer — Data Structures
 
 ## Data Structures
 
@@ -18,6 +18,8 @@ Every binary table (nodes, edges, ways) is a flat memory-mapped file:
 The mmap is opened with `Advice::Random`. Writing during import uses `AppenderJob`: parallel blob-parsing threads push ordered chunks through a channel; a background thread reassembles them via `BTreeMap<usize, Vec<D>>` and flushes in order, preserving the global ID sort across parallel workers.
 
 `TableFile::filter()` compacts in-place: scans forward, copies passing items back into freed slots, then truncates. Used to remove unreachable nodes after adjacency linking.
+
+`TableFile::create_with_capacity(path, count, fill)` pre-allocates the full file, mmaps the data region, and calls `fill(&mut [D])` to populate it — no heap allocation. Used for Morton-sort output and ID index construction.
 
 #### Header types
 
@@ -54,7 +56,9 @@ When `build_index_sorted` is called on a `TableFile<D>` where `D: Item` and `D::
 
 ### IdEntry
 
-A 16-byte `(key: u64, idx: u64)` record used as the element type of ID-index files (`TableFile<IdEntry>`). `key` is an OSM ID cast to `u64`; `idx` is the corresponding position in the primary (possibly Morton-reordered) table file. Looked up via `TableFile::find`.
+A 16-byte `(key: u64, idx: u64)` record used as the element type of ID-index files (`TableFile<IdEntry>`). `key` is an OSM ID cast to `u64`; `idx` is the corresponding position in the primary (Morton-reordered) table file. Looked up via `TableFile::find`.
+
+`node_id_index.bin` and `way_id_index.bin` are built in OSM ID order (matching the original table order), so `id_entries[old_pos].idx` can be written directly during Morton reordering without a binary search.
 
 ### PageFile (B-tree backing)
 
@@ -69,6 +73,8 @@ Edge connectivity is stored directly inside the record structs:
 
 Built lock-free during Phase 2 import using CAS loops on `AtomicU64` fields. At routing time, traversal is a pointer-chase through `Edge::next_edge`.
 
+After any edge reorder, `remap_adjacency_lists(nodes, edges, ways, remap)` translates all stored edge indices through `remap[old] = new` in parallel, preserving the list structure without relinking from scratch.
+
 ### Spatial Index (packed R-tree / Flatbush style)
 
 ```
@@ -81,15 +87,19 @@ Built lock-free during Phase 2 import using CAS loops on `AtomicU64` fields. At 
 
 Each `RTreeEntry` (24 bytes): `{ min_lat, min_lon, max_lat, max_lon: f32, index: u64 }`. Build: external-sort leaves by Morton code via `extsort`, then build upper levels in one pass over the mmap'd output. Query: min-heap traversal ordered by `min_dist_to_bbox`.
 
-Two files: `node_spatial.bin` (leaf `index` = node table index) and `edge_spatial.bin` (leaf `index` = edge table index).
+When the input is already Morton-sorted (nodes after Phase 5, edges after Phase 6), `build_presorted` fills level-0 via `par_iter_mut` and skips the external sort entirely.
 
-### External Sort (extsort)
+Two files: `node_spatial.bin` and `edge_spatial.bin`.
 
-Sorts `(key: u64, index: u64)` pairs entirely on disk. Chunk phase: scratch file divided into disjoint regions, each filled and sorted in parallel by rayon. Merge phase: single-threaded k-way min-heap merge. One temp file, one merge pass.
+### External Sort (extsort / morton)
+
+`storage::morton::sort_by_key(count, chunk_size, get_key, scratch, output)` external-sorts `count` items by an arbitrary `u64` key, streaming old indices to a callback in ascending order. Internally: rayon chunk-sort to a scratch file, then single-threaded k-way min-heap merge. One temp file, one merge pass.
+
+`sort_by_morton(count, chunk_size, get_pos, scratch, output)` wraps `sort_by_key` with a Morton key derived from `(lat, lon)`.
 
 ### Morton Encoding
 
-Standard 2D Z-order (Morton) curve mapping `(lat, lon)` → `u64`. Currently used only to sort spatial index leaves. Target of the Morton-reorder refactoring below.
+Standard 2D Z-order (Morton) curve mapping `(lat, lon)` → `u64` via bit-interleaving. Nearby geographic points map to nearby keys, clustering spatially related records onto the same memory-mapped pages.
 
 ### ID Field Dual Use
 
@@ -97,88 +107,60 @@ Standard 2D Z-order (Morton) curve mapping `(lat, lon)` → `u64`. Currently use
 
 ---
 
-## Import Pipeline (Current)
+## Import Pipeline
 
 ```
-Phase 1  Read PBF blobs in parallel
-         → nodes.bin  (sorted by NodeId)
-         → ways.bin   (sorted by WayId)
-         → edges.bin  (sorted by appearance order)
+Phase 1   Read PBF blobs in parallel
+          → nodes.bin  (sorted by NodeId)
+          → ways.bin   (sorted by WayId)
+          → edges.bin  (sorted by appearance order)
 
-Phase 2  Link adjacency lists
-         For each edge: binary_search NodeId → prepend to Node linked lists (CAS)
+Phase 2   Link adjacency lists
+          For each edge: binary_search NodeId → prepend to Node linked lists (CAS)
 
-Phase 3  Filter nodes
-         nodes.filter(is_connected) — in-place compaction, remove isolated nodes
+Phase 3   Filter nodes
+          nodes.filter(is_connected) — in-place compaction, remove isolated nodes
 
-Phase 4  Build ID index files                                        ✓ DONE
-         node_id_index.bin: TableFile<IdEntry>, key=NodeId, idx=node table position
-         way_id_index.bin:  TableFile<IdEntry>, key=WayId,  idx=way  table position
-         Written via create_with_capacity + rayon par_iter_mut (no heap allocation).
-         Used by the inspect service for OSM ID → primary table lookups.
+Phase 4   Build ID index files
+          node_id_index.bin: TableFile<IdEntry>, key=NodeId, idx=node table position
+          way_id_index.bin:  TableFile<IdEntry>, key=WayId,  idx=way  table position
+          Written via create_with_capacity + rayon par_iter_mut.
+          build_index_sorted appends the sparse key array for fast find().
+          Used by the inspect service for OSM ID → primary table lookups.
 
-Phase 5a Resolve way_idx
-         Linear O(n+m) cursor scan; also sets Way::first_edge_idx
+Phase 5a  Resolve way_idx
+          Linear O(n+m) cursor scan; also sets Way::first_edge_idx
 
-Phase 5b Resolve node indices, compute dist_m, country_id
-         binary_search on filtered nodes (parallel, rayon)
+Phase 5b  Resolve node indices, compute dist_m, country_id
+          binary_search on filtered nodes (parallel, rayon)
 
-Phase 6  Build spatial indexes
-         node_spatial.bin, edge_spatial.bin
-```
+Phase 6   Morton-sort nodes
+          sort_by_morton → nodes_reordered.bin (written via create_with_capacity)
+          node_id_index.idx column updated in-place: id_entries[old_pos].idx = new_pos
+          Remap edge.from_node_idx / to_node_idx in parallel via id_entries
 
----
+Phase 7   Morton-sort edges by from_node_idx
+          sort_by_key → edges_reordered.bin
+          Anonymous mmap remap[old] = new for adjacency pointer translation
+          remap_adjacency_lists: parallel fetch_update on all AtomicU64 edge pointers
+            (Node::first_edge_idx_outbound/inbound, Edge::next_edge/next_edge_reverse,
+             Way::first_edge_idx)
 
-## Refactoring Plan: Morton-Order Storage for Cache Locality
+Phase 8   Morton-sort ways by first_edge_idx
+          sort_by_key → ways_reordered.bin
+          way_id_index.idx column updated in-place (no build_index_sorted needed —
+          keys are unchanged, only payload updated)
+          Remap edge.way_idx in parallel via way_id_index entries
 
-### Motivation
-
-Routing performs random walks over nodes and edges. With tables in OSM ID order the working set of a single route is scattered across many pages. Reordering by geographic Morton code clusters nearby elements onto the same pages, improving page-cache locality especially for long-distance routes.
-
-### Planned Import Pipeline (after Morton reorder)
-
-```
-Phase 1   (unchanged) Parse PBF → ID-sorted nodes/ways/edges
-
-Phase 2   Link adjacency lists  (binary search on ID-sorted nodes, as today)
-Phase 3   Filter nodes          (in-place compaction, as today)
-
-Phase 4   Build ID index files  (as today)                           ✓ DONE
-          node_id_index.bin: key=NodeId, idx=node table position
-          way_id_index.bin:  key=WayId,  idx=way  table position
-
-Phase 5   Morton-sort nodes
-          extsort (morton_code, old_idx) → write nodes_reordered.bin in Morton order
-          Update node_id_index: idx column now points to Morton positions
-
-Phase 6   Morton-sort edges
-          Option A: assign each edge the Morton code of its from_node
-                    → clusters outbound edge lists of nearby nodes
-          Option B: sort by midpoint Morton code independently
-          Write edges_reordered.bin
-
-Phase 7   Resolve indices to final positions
-          from_node_idx / to_node_idx: remap via old→new node position mapping
-          Rebuild linked list heads (Node) and next pointers (Edge) for new positions
-          way_idx: unchanged linear cursor scan (ways not reordered)
-
-Phase 8   Build spatial indexes (unchanged — already Morton-sorted at leaf level)
+Phase 9   Build spatial indexes
+          node_spatial.bin — build_presorted (nodes already Morton-sorted)
+          edge_spatial.bin — build_presorted (edges already Morton-sorted by from_node)
 ```
 
 ### ID Index at Runtime
 
-`Service` loads `node_id_index.bin` and `way_id_index.bin` as `TableFile<IdEntry>` on startup. The inspect service resolves OSM IDs via `id_index.find(id)` → `entry.idx` → `primary_table.get(idx)`, decoupling ID lookup from primary table sort order. Once Morton reorder is done this path requires no further changes.
-
-Optionally call `build_index_sorted` on each ID index after writing to enable the sparse in-memory lookup layer (~4 MB) for faster `find` on large datasets.
+`Service` loads `node_id_index.bin` and `way_id_index.bin` as `TableFile<IdEntry>` on startup. The inspect service resolves OSM IDs via `id_index.find(id)` → `entry.idx` → `primary_table.get(idx)`.
 
 ### CSR Adjacency (Future Option)
 
 Once Morton-ordered, an alternative to intrusive linked lists is CSR (Compressed Sparse Row): `outbound_offsets[N+1]` + `outbound_edges[E]`, one pair per direction. Benefits: sequential array scan instead of pointer chase; removes `AtomicU64` from node/edge structs. Space is asymptotically identical to linked lists with bidirectional traversal (`2(N+1)×8 + 2E×8` vs `16N + 16E` bytes). This is a larger follow-on refactor.
-
-### Considerations
-
-1. **Scratch space**: Phase 5 needs the original table + reordered output + extsort scratch simultaneously. Budget ~3× node table size.
-2. **Way reordering**: ways are accessed rarely and via linear cursor scan. Reordering is unlikely to help.
-3. **Morton vs Hilbert**: Hilbert has better locality (no discontinuities) but more complex to compute. Morton is already implemented; start there.
-4. **Format versioning**: reordered files require bumped `VERSION` constants. Old files fail `SimpleHeader::verify()` with `HeaderSizeMismatch` or `VersionMismatch` → clean reimport required.
-5. **Incremental updates**: reordering makes incremental PBF updates impractical. Full reimport assumed.
