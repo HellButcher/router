@@ -1,6 +1,6 @@
 use std::{hash::Hasher, marker::PhantomData, mem::size_of};
 
-use crate::pod::TablePod;
+use crate::pod::{IndexInfo, SupportsIndex, TableDataHeader, TablePod};
 
 use self::{
     edge::Edge,
@@ -12,6 +12,8 @@ pub mod dim_restriction;
 pub mod edge;
 pub mod node;
 pub mod way;
+
+// ── SimpleHeader ──────────────────────────────────────────────────────────────
 
 #[repr(C)]
 pub struct SimpleHeader<I> {
@@ -25,35 +27,8 @@ pub struct SimpleHeader<I> {
 
 unsafe impl<I> TablePod for SimpleHeader<I> {}
 
-pub trait Versioned {
-    /// Version number for the data format. Must be incremented when the data format changes in a non-compatible way (eg: adding fields, changing field types, etc).
-    const VERSION: u32;
-}
-
-#[derive(Copy, Clone, Debug)]
-pub enum VerifiicationError {
-    HashMismatch,
-    VersionMismatch,
-    HeaderSizeMismatch,
-    DataSizeMismatch,
-}
-
-impl VerifiicationError {
-    pub fn description(&self) -> &'static str {
-        match self {
-            VerifiicationError::HashMismatch => "Header hash does not match expected value",
-            VerifiicationError::VersionMismatch => "Header version does not match expected value",
-            VerifiicationError::HeaderSizeMismatch => "Header size does not match expected value",
-            VerifiicationError::DataSizeMismatch => "Data size does not match expected value",
-        }
-    }
-}
-
-impl From<VerifiicationError> for std::io::Error {
-    fn from(e: VerifiicationError) -> std::io::Error {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, e.description())
-    }
-}
+/// Default no-op: `SimpleHeader` files never carry an index.
+impl<I> TableDataHeader for SimpleHeader<I> {}
 
 impl<I: 'static + Versioned> SimpleHeader<I> {
     fn name_hash() -> u64 {
@@ -88,15 +63,110 @@ impl<I: 'static + Versioned> Default for SimpleHeader<I> {
             _phantom: PhantomData,
         };
         let name_bytes = std::any::type_name::<I>().as_bytes();
-        let name_len = name_bytes.len();
-        if name_len > 128 {
-            r.name.copy_from_slice(&name_bytes[..128]);
-        } else {
-            r.name[..name_len].copy_from_slice(name_bytes);
-        }
+        let copy_len = name_bytes.len().min(128);
+        r.name[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
         r
     }
 }
+
+// ── HeaderWithIndex ───────────────────────────────────────────────────────────
+
+/// Drop-in replacement for [`SimpleHeader`] that additionally stores sparse
+/// lookup index metadata in the on-disk header block.
+///
+/// Use as `type Header = HeaderWithIndex<Self>` in [`TableData`] for any data
+/// type whose [`TableFile`] should support [`build_index_sorted`].
+///
+/// [`TableData`]: crate::tablefile::TableData
+/// [`TableFile`]: crate::tablefile::TableFile
+/// [`build_index_sorted`]: crate::tablefile::TableFile::build_index_sorted
+#[repr(C)]
+pub struct HeaderWithIndex<I> {
+    base: SimpleHeader<I>,
+    // Set to zero until build_index_sorted is called.
+    num_data_entries: u64,
+    entries_per_block: u64,
+    num_index_entries: u64,
+}
+
+// size_of::<HeaderWithIndex<_>>() = size_of::<SimpleHeader<_>>() + 24 = 160 + 24 = 184
+// HEADER_SIZE = 184.next_multiple_of(512) = 512
+const _: () = assert!(size_of::<HeaderWithIndex<()>>() == 184);
+
+unsafe impl<I> TablePod for HeaderWithIndex<I> {}
+
+impl<I> TableDataHeader for HeaderWithIndex<I> {
+    fn index_info(&self) -> Option<IndexInfo> {
+        if self.entries_per_block == 0 {
+            return None;
+        }
+        Some(IndexInfo {
+            num_data_entries: self.num_data_entries,
+            entries_per_block: self.entries_per_block,
+            num_index_entries: self.num_index_entries,
+        })
+    }
+}
+
+impl<I> SupportsIndex for HeaderWithIndex<I> {
+    fn set_index_info(&mut self, info: IndexInfo) {
+        self.num_data_entries = info.num_data_entries;
+        self.entries_per_block = info.entries_per_block;
+        self.num_index_entries = info.num_index_entries;
+    }
+}
+
+impl<I: 'static + Versioned> HeaderWithIndex<I> {
+    pub fn verify(&self) -> Result<(), VerifiicationError> {
+        self.base.verify()
+    }
+}
+
+impl<I: 'static + Versioned> Default for HeaderWithIndex<I> {
+    fn default() -> Self {
+        Self {
+            base: SimpleHeader::default(),
+            num_data_entries: 0,
+            entries_per_block: 0,
+            num_index_entries: 0,
+        }
+    }
+}
+
+// ── shared types ──────────────────────────────────────────────────────────────
+
+pub trait Versioned {
+    /// Version number for the data format. Must be incremented when the data
+    /// format changes in a non-compatible way (e.g. adding or resizing fields).
+    const VERSION: u32;
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum VerifiicationError {
+    HashMismatch,
+    VersionMismatch,
+    HeaderSizeMismatch,
+    DataSizeMismatch,
+}
+
+impl VerifiicationError {
+    pub fn description(&self) -> &'static str {
+        match self {
+            VerifiicationError::HashMismatch => "Header hash does not match expected value",
+            VerifiicationError::VersionMismatch => "Header version does not match expected value",
+            VerifiicationError::HeaderSizeMismatch => "Header size does not match expected value",
+            VerifiicationError::DataSizeMismatch => "Data size does not match expected value",
+        }
+    }
+}
+
+impl From<VerifiicationError> for std::io::Error {
+    fn from(e: VerifiicationError) -> std::io::Error {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, e.description())
+    }
+}
+
+// ── adjacency linking ─────────────────────────────────────────────────────────
 
 /// Link each edge into its from- and to-node's adjacency linked lists.
 ///

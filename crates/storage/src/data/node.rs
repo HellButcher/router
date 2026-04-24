@@ -75,11 +75,9 @@ impl Node {
 unsafe impl TablePod for Node {}
 
 impl Item for Node {
-    type Key = NodeId;
-
     #[inline]
-    fn key(&self) -> &NodeId {
-        &self.id
+    fn key(&self) -> u64 {
+        self.id.0 as u64
     }
 }
 

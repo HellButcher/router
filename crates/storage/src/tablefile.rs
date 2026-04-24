@@ -13,22 +13,43 @@ use std::{fs::OpenOptions, io};
 
 use memmap2::{Advice, MmapOptions, MmapRaw, RemapOptions};
 
-use crate::pod;
+use crate::pod::{self, IndexInfo, SupportsIndex, TableDataHeader as _};
 
 pub type Result<T, E = io::Error> = std::result::Result<T, E>;
 
 pub trait TableData: pod::TablePod {
-    type Header: pod::TablePod;
+    type Header: pod::TableDataHeader;
 }
+
+// ── index support ─────────────────────────────────────────────────────────────
+
+/// Target size of the sparse index key array (~4 MB).
+const TARGET_INDEX_BYTES: usize = 4 * 1024 * 1024;
+
+/// In-memory representation of the sparse lookup index embedded in the file.
+struct TableIndex {
+    /// First key of every block of `entries_per_block` data entries.
+    keys: Box<[u64]>,
+    entries_per_block: usize,
+    /// True number of data entries; the file is larger due to the index section.
+    num_data_entries: usize,
+}
+
+// ── TableFile ─────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 struct AppenderData {
     appended: AtomicBool,
 }
+
 pub struct TableFile<D> {
     file: File,
     mmap: RwLock<MmapRaw>,
     appender: Option<Arc<AppenderData>>,
+    /// Sparse lookup index, present when [`build_index_sorted`] has been called.
+    ///
+    /// [`build_index_sorted`]: TableFile::build_index_sorted
+    index: Option<TableIndex>,
     _phantom: PhantomData<fn(&D)>,
 }
 
@@ -139,12 +160,31 @@ impl<D: TableData> TableFile<D> {
         if file_len > isize::MAX as u64 {
             return Err(io::ErrorKind::FileTooLarge.into());
         }
-        if !(file_len - Self::HEADER_SIZE as u64).is_multiple_of(Self::DATA_SIZE as u64) {
+
+        // Read the header (via a temporary small mapping) to detect an embedded index.
+        let index = {
+            let header_map = MmapOptions::new()
+                .len(Self::HEADER_SIZE)
+                .map_raw_read_only(&file)?;
+            let header = unsafe { &*(header_map.as_ptr() as *const D::Header) };
+            match header.index_info() {
+                Some(info) => Some(Self::load_index(&file, file_len, info)?),
+                None => None,
+            }
+        };
+
+        // Validate that the data section is properly aligned.
+        let data_bytes = match &index {
+            Some(idx) => idx.num_data_entries as u64 * Self::DATA_SIZE as u64,
+            None => file_len - Self::HEADER_SIZE as u64,
+        };
+        if !data_bytes.is_multiple_of(Self::DATA_SIZE as u64) {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "File not aligned",
             ));
         }
+
         let mut opts = MmapOptions::new();
         opts.len(file_len as usize);
         let mmap = if read_only {
@@ -157,7 +197,41 @@ impl<D: TableData> TableFile<D> {
             file,
             mmap: RwLock::new(mmap),
             appender: None,
+            index,
             _phantom: PhantomData,
+        })
+    }
+
+    /// Read and copy the sparse key array from `file` into memory given validated
+    /// header metadata.  Also verifies the expected file length.
+    fn load_index(file: &File, file_len: u64, info: IndexInfo) -> Result<TableIndex> {
+        let n = info.num_data_entries as usize;
+        let x = info.entries_per_block as usize;
+        let y = info.num_index_entries as usize;
+
+        let data_bytes = n as u64 * Self::DATA_SIZE as u64;
+        let index_start = (Self::HEADER_SIZE as u64 + data_bytes).next_multiple_of(512);
+        let expected_len = index_start + y as u64 * 8;
+
+        if expected_len != file_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Index size in header does not match file size",
+            ));
+        }
+
+        // Copy the key array into memory (~4 MB).
+        let key_map = MmapOptions::new()
+            .offset(index_start)
+            .len(y * 8)
+            .map_raw_read_only(file)?;
+        let keys: Box<[u64]> =
+            unsafe { std::slice::from_raw_parts(key_map.as_ptr() as *const u64, y) }.into();
+
+        Ok(TableIndex {
+            keys,
+            entries_per_block: x,
+            num_data_entries: n,
         })
     }
 
@@ -250,12 +324,17 @@ impl<D: TableData> TableFile<D> {
                 return Ok(mmap);
             }
         }
-
         self.get_mmap_grow_full()
     }
 
+    /// Number of data entries.  When an index is present the mmap is larger
+    /// than the data section, so we use the count stored in the index instead
+    /// of deriving it from the file size.
     #[inline]
     pub fn len(&self) -> usize {
+        if let Some(idx) = &self.index {
+            return idx.num_data_entries;
+        }
         let mmap = self.get_mmap_grow_full().unwrap();
         (mmap.len() - Self::HEADER_SIZE) / Self::DATA_SIZE
     }
@@ -263,23 +342,6 @@ impl<D: TableData> TableFile<D> {
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
-    }
-
-    /// Binary-search for an item by its key.
-    ///
-    /// Returns `Some((table_index, item))` when found, or `None` when not present.
-    /// Requires the table to be sorted by key, which is guaranteed after import.
-    pub fn find(&self, key: &D::Key) -> Result<Option<(usize, Ref<'_, D>)>>
-    where
-        D: crate::pod::Item,
-    {
-        let all = self.get_all()?;
-        let result = all.binary_search_by(|d| d.key().cmp(key));
-        drop(all);
-        match result {
-            Ok(idx) => Ok(Some((idx, self.get(idx)?))),
-            Err(_) => Ok(None),
-        }
     }
 
     #[inline]
@@ -292,7 +354,11 @@ impl<D: TableData> TableFile<D> {
 
     pub fn get_all(&self) -> Result<Ref<'_, [D]>> {
         let mmap = self.get_mmap_grow_full()?;
-        let len = (mmap.len() - Self::HEADER_SIZE) / Self::DATA_SIZE;
+        let len = if let Some(idx) = &self.index {
+            idx.num_data_entries
+        } else {
+            (mmap.len() - Self::HEADER_SIZE) / Self::DATA_SIZE
+        };
         let ptr: NonNull<D> =
             unsafe { NonNull::new(mmap.as_ptr().add(Self::HEADER_SIZE) as _).unwrap() };
         let slice = NonNull::slice_from_raw_parts(ptr, len);
@@ -303,11 +369,14 @@ impl<D: TableData> TableFile<D> {
         let mmap = self.mmap.get_mut().unwrap_or_else(PoisonError::into_inner);
         let full_len = self.file.metadata()?.len();
         Self::grow_mmap(mmap, full_len)?;
-        let len = (mmap.len() - Self::HEADER_SIZE) / Self::DATA_SIZE;
+        let len = if let Some(idx) = &self.index {
+            idx.num_data_entries
+        } else {
+            (mmap.len() - Self::HEADER_SIZE) / Self::DATA_SIZE
+        };
         unsafe {
             let ptr: *mut D = mmap.as_ptr().add(Self::HEADER_SIZE) as _;
-            let slice = std::slice::from_raw_parts_mut(ptr, len);
-            Ok(slice)
+            Ok(std::slice::from_raw_parts_mut(ptr, len))
         }
     }
 
@@ -398,6 +467,118 @@ impl<D: TableData> TableFile<D> {
     // maybe seperate New-Type for this
 }
 
+// ── find (requires IndexKey) ──────────────────────────────────────────────────
+
+impl<D: TableData + pod::Item> TableFile<D> {
+    /// Binary-search for an item by its key.
+    ///
+    /// When a sparse index is present (built via [`build_index_sorted`]) the
+    /// search first narrows to a block of `entries_per_block` entries using the
+    /// in-memory key array, then binary-searches within that block.  Without an
+    /// index the full table is searched.
+    ///
+    /// Requires the table to be sorted by key, which is guaranteed after import.
+    ///
+    /// [`build_index_sorted`]: TableFile::build_index_sorted
+    pub fn find(&self, key: u64) -> Result<Option<(usize, Ref<'_, D>)>> {
+        let all = self.get_all()?;
+        let range = if let Some(idx) = &self.index {
+            // Find the last block whose first key is ≤ key.
+            let block = match idx.keys.binary_search(&key) {
+                Ok(i) => i,
+                Err(i) => i.saturating_sub(1),
+            };
+            let start = block * idx.entries_per_block;
+            let end = ((block + 1) * idx.entries_per_block).min(all.len());
+            start..end
+        } else {
+            0..all.len()
+        };
+        let result = all[range.clone()].binary_search_by_key(&key, |d| d.key());
+        drop(all);
+        match result {
+            Ok(rel) => Ok(Some((range.start + rel, self.get(range.start + rel)?))),
+            Err(_) => Ok(None),
+        }
+    }
+}
+
+// ── build_index_sorted (requires SupportsIndex) ───────────────────────────────
+
+impl<D: TableData + pod::Item> TableFile<D>
+where
+    D::Header: SupportsIndex,
+{
+    /// Build the sparse lookup index and embed its metadata in the file header.
+    ///
+    /// Must be called after all appenders have finished and before the file is
+    /// used for routing.  The index key array (`~4 MB`) is appended after a
+    /// 512-byte-aligned gap following the data section; the metadata
+    /// (`num_data_entries`, `entries_per_block`, `num_index_entries`) is written
+    /// into the file header via the existing mmap.
+    pub fn build_index_sorted(&mut self) -> Result<()> {
+        self.check_no_appender()?;
+
+        let n = self.len();
+        if n == 0 {
+            return Ok(());
+        }
+
+        // Choose X (entries per block) and Y (number of index entries) so that
+        // the key array is approximately TARGET_INDEX_BYTES.
+        let target_y = (TARGET_INDEX_BYTES / 8).max(1);
+        let x = n.div_ceil(target_y.min(n)); // entries per block
+        let y = n.div_ceil(x); // actual number of index entries
+
+        // Skip the index when the table is small enough that it would consist
+        // of only a single block — binary search over the full table is just
+        // as fast and the extra file section would waste space.
+        if y <= 1 {
+            return Ok(());
+        }
+
+        // Collect the first key of every X-th block.
+        let keys: Vec<u64> = {
+            let all = self.get_all()?;
+            (0..n).step_by(x).map(|i| all[i].key()).collect()
+        };
+        debug_assert_eq!(keys.len(), y);
+
+        // Append the key array after padding the data section to 512 bytes.
+        let data_bytes = n as u64 * Self::DATA_SIZE as u64;
+        let index_start = (Self::HEADER_SIZE as u64 + data_bytes).next_multiple_of(512);
+        self.file.seek(SeekFrom::Start(index_start))?;
+        self.file
+            .write_all(unsafe { slice_as_bytes(keys.as_slice()) })?;
+        self.file.set_len(index_start + y as u64 * 8)?;
+
+        // Write index metadata into the header through the mmap.
+        self.header_mut()?.set_index_info(IndexInfo {
+            num_data_entries: n as u64,
+            entries_per_block: x as u64,
+            num_index_entries: y as u64,
+        });
+        self.flush()?;
+
+        // Remap to include the index section.
+        let new_file_len = index_start + y as u64 * 8;
+        {
+            let mut mmap = self.mmap.write().unwrap_or_else(PoisonError::into_inner);
+            Self::grow_mmap(&mut mmap, new_file_len)?;
+        }
+
+        self.index = Some(TableIndex {
+            keys: keys.into_boxed_slice(),
+            entries_per_block: x,
+            num_data_entries: n,
+        });
+
+        Ok(())
+    }
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
 #[inline]
 unsafe fn slice_as_bytes<T>(data: &[T]) -> &[u8] {
     let len = std::mem::size_of_val(data);
@@ -419,6 +600,8 @@ fn write_all_vectored<W: Write>(w: &mut W, mut bufs: &mut [IoSlice<'_>]) -> io::
     }
     Ok(())
 }
+
+// ── Appender / AppenderJob ────────────────────────────────────────────────────
 
 impl<D: TableData> Appender<D> {
     pub fn append(&mut self, data: &[D]) -> io::Result<()> {

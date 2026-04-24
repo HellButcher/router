@@ -1,5 +1,3 @@
-use router_storage::data::{node::NodeId, way::WayId};
-
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -51,7 +49,7 @@ impl Service {
                 for id in ids {
                     let (_, node) = self
                         .nodes
-                        .find(&NodeId(id))?
+                        .find(id as u64)?
                         .ok_or(Error::NotFound("NodeId", id))?;
                     nodes.push(NodeMeta::from(&node));
                 }
@@ -64,7 +62,7 @@ impl Service {
             (None, Some(id)) => {
                 let (way_idx, way) = self
                     .ways
-                    .find(&WayId(id))?
+                    .find(id as u64)?
                     .ok_or_else(|| Error::InvalidRequest(format!("way {id} not found")))?;
                 let wt = self.collect_way(way_idx, &way);
                 Ok(InspectResponse {

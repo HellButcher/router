@@ -69,11 +69,9 @@ impl Way {
 unsafe impl TablePod for Way {}
 
 impl Item for Way {
-    type Key = WayId;
-
     #[inline]
-    fn key(&self) -> &WayId {
-        &self.id
+    fn key(&self) -> u64 {
+        self.id.0 as u64
     }
 }
 
