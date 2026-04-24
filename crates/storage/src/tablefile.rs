@@ -11,7 +11,7 @@ use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard};
 use std::thread::JoinHandle;
 use std::{fs::OpenOptions, io};
 
-use memmap2::{Advice, MmapOptions, MmapRaw, RemapOptions};
+use memmap2::{Advice, MmapMut, MmapOptions, MmapRaw, RemapOptions};
 
 use crate::pod::{self, IndexInfo, SupportsIndex, TableDataHeader as _};
 
@@ -251,6 +251,60 @@ impl<D: TableData> TableFile<D> {
         let mut file = self.file.try_clone()?;
         file.seek(SeekFrom::End(0))?;
         Ok(Appender(file, Arc::clone(data), PhantomData))
+    }
+
+    /// Pre-allocate a fresh file for exactly `count` entries, call `fill` with
+    /// the zeroed data slice so the caller can write entries (e.g. via rayon
+    /// `par_iter_mut`), flush, and return the `TableFile`.
+    pub fn create_with_capacity<P: AsRef<Path>>(
+        path: P,
+        count: usize,
+        fill: impl FnOnce(&mut [D]),
+    ) -> Result<Self>
+    where
+        D::Header: Default,
+    {
+        Self::create_with_capacity_and(path, count, Default::default, fill)
+    }
+
+    pub fn create_with_capacity_and<P: AsRef<Path>>(
+        path: P,
+        count: usize,
+        init_header: impl FnOnce() -> D::Header,
+        fill: impl FnOnce(&mut [D]),
+    ) -> Result<Self> {
+        let file_size = Self::HEADER_SIZE + count * Self::DATA_SIZE;
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)?;
+        file.set_len(file_size as u64)?;
+
+        {
+            let mut header = init_header();
+            let header_bytes = pod::as_bytes_mut(std::slice::from_mut(&mut header));
+            let mut mmap = unsafe { MmapMut::map_mut(&file) }?;
+            mmap[..header_bytes.len()].copy_from_slice(header_bytes);
+
+            if count > 0 {
+                let mut data_mmap = unsafe {
+                    MmapOptions::new()
+                        .offset(Self::HEADER_SIZE as u64)
+                        .len(count * Self::DATA_SIZE)
+                        .map_mut(&file)?
+                };
+                let slice = unsafe {
+                    std::slice::from_raw_parts_mut(data_mmap.as_mut_ptr() as *mut D, count)
+                };
+                fill(slice);
+                data_mmap.flush()?;
+            }
+        }
+
+        // new_intern re-reads the header; file is already correctly sized.
+        Self::new_intern(file, false, || unreachable!())
     }
 
     pub fn flush(&self) -> Result<()> {

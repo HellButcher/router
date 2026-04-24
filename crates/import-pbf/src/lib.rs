@@ -15,6 +15,7 @@ use router_storage::{
         node::{Node, NodeId},
         way::{Way, WayId},
     },
+    idindex::IdEntry,
     spatial::SpatialIndexBuilder,
     spatial::haversine_m,
     tablefile::TableFile,
@@ -438,6 +439,45 @@ impl<R: io::BufRead + Send> Importer<R> {
                 .filter(Node::is_connected)
                 .map_err(Error::WriteError)?;
             tracing::info!(nodes = nodes.len(), "filtered");
+        }
+
+        tracing::info!("building id indices");
+        {
+            let _span = tracing::info_span!("build_node_id_index").entered();
+            let nodes_ref = nodes.get_all().map_err(Error::WriteError)?;
+            let nodes_slice: &[Node] = &nodes_ref;
+            let count = nodes_slice.len();
+            TableFile::<IdEntry>::create_with_capacity(
+                self.target_dir.join("node_id_index.bin"),
+                count,
+                |entries| {
+                    entries.par_iter_mut().enumerate().for_each(|(idx, entry)| {
+                        entry.key = nodes_slice[idx].id.0 as u64;
+                        entry.idx = idx as u64;
+                    });
+                },
+            )
+            .map_err(Error::WriteError)?;
+            tracing::info!(count, "node id index written");
+        }
+
+        {
+            let _span = tracing::info_span!("build_way_id_index").entered();
+            let ways_ref = ways.get_all().map_err(Error::WriteError)?;
+            let ways_slice: &[Way] = &ways_ref;
+            let count = ways_slice.len();
+            TableFile::<IdEntry>::create_with_capacity(
+                self.target_dir.join("way_id_index.bin"),
+                count,
+                |entries| {
+                    entries.par_iter_mut().enumerate().for_each(|(idx, entry)| {
+                        entry.key = ways_slice[idx].id.0 as u64;
+                        entry.idx = idx as u64;
+                    });
+                },
+            )
+            .map_err(Error::WriteError)?;
+            tracing::info!(count, "way id index written");
         }
 
         let country_lookup = match &self.country_boundaries {

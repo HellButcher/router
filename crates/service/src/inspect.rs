@@ -47,10 +47,11 @@ impl Service {
             (Some(ids), None) => {
                 let mut nodes = Vec::with_capacity(ids.len());
                 for id in ids {
-                    let (_, node) = self
-                        .nodes
+                    let (_, entry) = self
+                        .node_id_index
                         .find(id as u64)?
                         .ok_or(Error::NotFound("NodeId", id))?;
+                    let node = self.nodes.get(entry.idx as usize)?;
                     nodes.push(NodeMeta::from(&node));
                 }
                 Ok(InspectResponse {
@@ -60,10 +61,12 @@ impl Service {
                 })
             }
             (None, Some(id)) => {
-                let (way_idx, way) = self
-                    .ways
+                let (_, entry) = self
+                    .way_id_index
                     .find(id as u64)?
                     .ok_or_else(|| Error::InvalidRequest(format!("way {id} not found")))?;
+                let way_idx = entry.idx as usize;
+                let way = self.ways.get(way_idx)?;
                 let wt = self.collect_way(way_idx, &way);
                 Ok(InspectResponse {
                     node: wt.nodes,

@@ -19,6 +19,7 @@ use crate::error::{Error, Result};
 use profile::{PROFILES, Profile};
 use router_storage::{
     data::{edge::Edge, node::Node, way::Way},
+    idindex::IdEntry,
     spatial::SpatialIndex,
     tablefile::TableFile,
 };
@@ -47,6 +48,8 @@ pub struct Service {
     pub(crate) nodes: TableFile<Node>,
     pub(crate) edges: TableFile<Edge>,
     pub(crate) ways: TableFile<Way>,
+    pub(crate) node_id_index: TableFile<IdEntry>,
+    pub(crate) way_id_index: TableFile<IdEntry>,
     pub(crate) max_radius_m: f32,
     pub(crate) speed_config: SpeedConfig,
 }
@@ -58,9 +61,15 @@ impl Service {
         let nodes = TableFile::<Node>::open_read_only(options.storage_dir.join("nodes.bin"))?;
         let edges = TableFile::<Edge>::open_read_only(options.storage_dir.join("edges.bin"))?;
         let ways = TableFile::<Way>::open_read_only(options.storage_dir.join("ways.bin"))?;
+        let node_id_index =
+            TableFile::<IdEntry>::open_read_only(options.storage_dir.join("node_id_index.bin"))?;
+        let way_id_index =
+            TableFile::<IdEntry>::open_read_only(options.storage_dir.join("way_id_index.bin"))?;
         nodes.header()?.verify()?;
         edges.header()?.verify()?;
         ways.header()?.verify()?;
+        node_id_index.header()?.verify()?;
+        way_id_index.header()?.verify()?;
 
         Ok(Self {
             profiles: PROFILES.to_vec(),
@@ -69,6 +78,8 @@ impl Service {
             nodes,
             edges,
             ways,
+            node_id_index,
+            way_id_index,
             max_radius_m: options.max_radius_m,
             speed_config: options.speed_config,
         })
