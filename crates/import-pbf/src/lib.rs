@@ -441,13 +441,12 @@ impl<R: io::BufRead + Send> Importer<R> {
             tracing::info!(nodes = nodes.len(), "filtered");
         }
 
-        tracing::info!("building id indices");
         {
             let _span = tracing::info_span!("build_node_id_index").entered();
             let nodes_ref = nodes.get_all().map_err(Error::WriteError)?;
             let nodes_slice: &[Node] = &nodes_ref;
             let count = nodes_slice.len();
-            TableFile::<IdEntry>::create_with_capacity(
+            let mut index = TableFile::<IdEntry>::create_with_capacity(
                 self.target_dir.join("node_id_index.bin"),
                 count,
                 |entries| {
@@ -458,6 +457,7 @@ impl<R: io::BufRead + Send> Importer<R> {
                 },
             )
             .map_err(Error::WriteError)?;
+            index.build_index_sorted().map_err(Error::WriteError)?;
             tracing::info!(count, "node id index written");
         }
 
@@ -466,7 +466,7 @@ impl<R: io::BufRead + Send> Importer<R> {
             let ways_ref = ways.get_all().map_err(Error::WriteError)?;
             let ways_slice: &[Way] = &ways_ref;
             let count = ways_slice.len();
-            TableFile::<IdEntry>::create_with_capacity(
+            let mut index = TableFile::<IdEntry>::create_with_capacity(
                 self.target_dir.join("way_id_index.bin"),
                 count,
                 |entries| {
@@ -477,6 +477,7 @@ impl<R: io::BufRead + Send> Importer<R> {
                 },
             )
             .map_err(Error::WriteError)?;
+            index.build_index_sorted().map_err(Error::WriteError)?;
             tracing::info!(count, "way id index written");
         }
 

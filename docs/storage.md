@@ -111,13 +111,19 @@ Phase 2  Link adjacency lists
 Phase 3  Filter nodes
          nodes.filter(is_connected) — in-place compaction, remove isolated nodes
 
-Phase 4a Resolve way_idx
+Phase 4  Build ID index files                                        ✓ DONE
+         node_id_index.bin: TableFile<IdEntry>, key=NodeId, idx=node table position
+         way_id_index.bin:  TableFile<IdEntry>, key=WayId,  idx=way  table position
+         Written via create_with_capacity + rayon par_iter_mut (no heap allocation).
+         Used by the inspect service for OSM ID → primary table lookups.
+
+Phase 5a Resolve way_idx
          Linear O(n+m) cursor scan; also sets Way::first_edge_idx
 
-Phase 4b Resolve node indices, compute dist_m, country_id
+Phase 5b Resolve node indices, compute dist_m, country_id
          binary_search on filtered nodes (parallel, rayon)
 
-Phase 5  Build spatial indexes
+Phase 6  Build spatial indexes
          node_spatial.bin, edge_spatial.bin
 ```
 
@@ -129,16 +135,7 @@ Phase 5  Build spatial indexes
 
 Routing performs random walks over nodes and edges. With tables in OSM ID order the working set of a single route is scattered across many pages. Reordering by geographic Morton code clusters nearby elements onto the same pages, improving page-cache locality especially for long-distance routes.
 
-### New Storage File: ID Index (`TableFile<IdEntry>`)
-
-After Phase 1 the node and way tables are already ID-sorted, so building the ID index is a single sequential scan that writes `(id as u64, position)` pairs. This file serves two purposes:
-
-1. **During import**: resolves OSM IDs to table positions after the Morton reorder (replacing `binary_search` on the primary table, which is no longer ID-sorted).
-2. **At runtime**: if needed for inspect/debug lookups by OSM ID.
-
-Because the ID index itself is ID-sorted and small enough to benefit, it is a natural candidate for `HeaderWithIndex` + `build_index_sorted` to enable fast ID→position lookups.
-
-### Planned Import Pipeline
+### Planned Import Pipeline (after Morton reorder)
 
 ```
 Phase 1   (unchanged) Parse PBF → ID-sorted nodes/ways/edges
@@ -146,10 +143,9 @@ Phase 1   (unchanged) Parse PBF → ID-sorted nodes/ways/edges
 Phase 2   Link adjacency lists  (binary search on ID-sorted nodes, as today)
 Phase 3   Filter nodes          (in-place compaction, as today)
 
-Phase 4   Build ID index files
-          node_id_index.bin: TableFile<IdEntry>, key=NodeId, idx=node table position
-          way_id_index.bin:  TableFile<IdEntry>, key=WayId,  idx=way  table position
-          Optionally call build_index_sorted on each for fast runtime lookups.
+Phase 4   Build ID index files  (as today)                           ✓ DONE
+          node_id_index.bin: key=NodeId, idx=node table position
+          way_id_index.bin:  key=WayId,  idx=way  table position
 
 Phase 5   Morton-sort nodes
           extsort (morton_code, old_idx) → write nodes_reordered.bin in Morton order
@@ -169,17 +165,11 @@ Phase 7   Resolve indices to final positions
 Phase 8   Build spatial indexes (unchanged — already Morton-sorted at leaf level)
 ```
 
-### Variant: Link After Filtering, Before ID Index
+### ID Index at Runtime
 
-Phases 2–4 can be reordered so filtering happens before the ID index is built, keeping the index smaller:
+`Service` loads `node_id_index.bin` and `way_id_index.bin` as `TableFile<IdEntry>` on startup. The inspect service resolves OSM IDs via `id_index.find(id)` → `entry.idx` → `primary_table.get(idx)`, decoupling ID lookup from primary table sort order. Once Morton reorder is done this path requires no further changes.
 
-```
-Phase 1  Parse PBF
-Phase 2  Link adjacency lists
-Phase 3  Filter nodes
-Phase 4  Build ID index on filtered nodes   ← smaller index
-Phase 5–8 as above
-```
+Optionally call `build_index_sorted` on each ID index after writing to enable the sparse in-memory lookup layer (~4 MB) for faster `find` on large datasets.
 
 ### CSR Adjacency (Future Option)
 

@@ -8,7 +8,7 @@
 ///
 /// [`TableFile`]: crate::tablefile::TableFile
 use crate::{
-    data::{SimpleHeader, Versioned},
+    data::{HeaderWithIndex, Versioned},
     pod::Item,
     tablefile::TableData,
 };
@@ -29,7 +29,7 @@ impl Item for IdEntry {
 }
 
 impl TableData for IdEntry {
-    type Header = SimpleHeader<IdEntry>;
+    type Header = HeaderWithIndex<IdEntry>;
 }
 
 impl Versioned for IdEntry {
