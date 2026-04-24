@@ -16,6 +16,7 @@ use router_storage::{
         way::{Way, WayId},
     },
     idindex::IdEntry,
+    morton::{DEFAULT_CHUNK_SIZE, sort_by_morton},
     spatial::SpatialIndexBuilder,
     spatial::haversine_m,
     tablefile::TableFile,
@@ -454,6 +455,7 @@ impl<R: io::BufRead + Send> Importer<R> {
                         entry.key = nodes_slice[idx].id.0 as u64;
                         entry.idx = idx as u64;
                     });
+                    Ok(())
                 },
             )
             .map_err(Error::WriteError)?;
@@ -474,6 +476,7 @@ impl<R: io::BufRead + Send> Importer<R> {
                         entry.key = ways_slice[idx].id.0 as u64;
                         entry.idx = idx as u64;
                     });
+                    Ok(())
                 },
             )
             .map_err(Error::WriteError)?;
@@ -567,6 +570,70 @@ impl<R: io::BufRead + Send> Importer<R> {
         nodes.flush().map_err(Error::WriteError)?;
         edges.flush().map_err(Error::WriteError)?;
         ways.flush().map_err(Error::WriteError)?;
+
+        {
+            let _span = tracing::info_span!("morton_sort_nodes").entered();
+
+            let nodes_ref = nodes.get_all().map_err(Error::WriteError)?;
+            let nodes_slice: &[Node] = &nodes_ref;
+            let count = nodes_slice.len();
+
+            // Open node_id_index for in-place idx updates (id_entries[old_idx].idx = new_idx).
+            let mut node_id_index =
+                TableFile::<IdEntry>::open(self.target_dir.join("node_id_index.bin"))
+                    .map_err(Error::WriteError)?;
+            let id_entries = node_id_index.get_all_mut().map_err(Error::WriteError)?;
+
+            // Pre-allocate the reordered file and fill it via the sort callback.
+            // The id_index was built in node order so id_entries[old_idx].idx == old_idx;
+            // direct assignment updates it to the new Morton position.
+            let reordered_path = self.target_dir.join("nodes_reordered.bin");
+            let scratch = self.target_dir.join("nodes.sort.tmp");
+            let mut new_idx: u64 = 0;
+            TableFile::<Node>::create_with_capacity(&reordered_path, count, |entries| {
+                sort_by_morton(
+                    count,
+                    DEFAULT_CHUNK_SIZE,
+                    |i| (nodes_slice[i].pos.lat, nodes_slice[i].pos.lon),
+                    &scratch,
+                    |old_idx| {
+                        // Safety: Node contains AtomicU64 (not Copy), but we own the
+                        // source slice exclusively for the duration of this sort and
+                        // never alias the same element across threads.
+                        entries[new_idx as usize] =
+                            unsafe { std::ptr::read(&nodes_slice[old_idx as usize]) };
+                        id_entries[old_idx as usize].idx = new_idx;
+                        new_idx += 1;
+                        Ok(())
+                    },
+                )
+            })
+            .map_err(Error::WriteError)?;
+
+            // Remap edge from/to node indices: old position → new Morton position.
+            // id_entries[old_idx].idx is now the Morton position; direct indexing works.
+            {
+                let _span = tracing::info_span!("remap_edge_node_indices").entered();
+                // Reborrow as shared for parallel read — only .idx fields are read here.
+                let id_entries_ro: &[IdEntry] = &*id_entries;
+                let edges_slice = edges.get_all_mut().map_err(Error::WriteError)?;
+                edges_slice.par_iter_mut().for_each(|edge| {
+                    edge.from_node_idx = id_entries_ro[edge.from_node_idx as usize].idx;
+                    edge.to_node_idx = id_entries_ro[edge.to_node_idx as usize].idx;
+                });
+            }
+            edges.flush().map_err(Error::WriteError)?;
+            node_id_index.flush().map_err(Error::WriteError)?;
+
+            drop(nodes_ref);
+            drop(nodes);
+            std::fs::rename(&reordered_path, self.target_dir.join("nodes.bin"))
+                .map_err(Error::WriteError)?;
+            nodes = TableFile::<Node>::open_read_only(self.target_dir.join("nodes.bin"))
+                .map_err(Error::WriteError)?;
+
+            tracing::info!(count, "nodes Morton-sorted");
+        }
 
         tracing::info!("building spatial indices");
         {

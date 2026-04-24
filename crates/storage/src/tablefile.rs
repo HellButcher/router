@@ -259,7 +259,7 @@ impl<D: TableData> TableFile<D> {
     pub fn create_with_capacity<P: AsRef<Path>>(
         path: P,
         count: usize,
-        fill: impl FnOnce(&mut [D]),
+        fill: impl FnOnce(&mut [D]) -> Result<()>,
     ) -> Result<Self>
     where
         D::Header: Default,
@@ -271,7 +271,7 @@ impl<D: TableData> TableFile<D> {
         path: P,
         count: usize,
         init_header: impl FnOnce() -> D::Header,
-        fill: impl FnOnce(&mut [D]),
+        fill: impl FnOnce(&mut [D]) -> Result<()>,
     ) -> Result<Self> {
         let file_size = Self::HEADER_SIZE + count * Self::DATA_SIZE;
         let file = OpenOptions::new()
@@ -298,7 +298,7 @@ impl<D: TableData> TableFile<D> {
                 let slice = unsafe {
                     std::slice::from_raw_parts_mut(data_mmap.as_mut_ptr() as *mut D, count)
                 };
-                fill(slice);
+                fill(slice)?;
                 data_mmap.flush()?;
             }
         }

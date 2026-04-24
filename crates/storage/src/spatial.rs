@@ -33,7 +33,7 @@ use std::{
 
 use memmap2::{Advice, MmapMut, MmapOptions, MmapRaw};
 
-use crate::{extsort, pod::TablePod};
+use crate::pod::TablePod;
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -45,8 +45,7 @@ const MAX_LEVELS: usize = 16;
 pub const DEFAULT_NODE_SIZE: u32 = 16;
 /// On-disk header size; struct is smaller, remainder is zeros.
 const HEADER_DISK_SIZE: usize = 512;
-/// Default sort-chunk size: 16 M entries × 16 bytes ≈ 256 MB RAM per chunk.
-pub const DEFAULT_CHUNK_SIZE: usize = 16 * 1024 * 1024;
+pub use crate::morton::DEFAULT_CHUNK_SIZE;
 
 // ── on-disk types ─────────────────────────────────────────────────────────────
 
@@ -296,22 +295,14 @@ impl SpatialIndexBuilder {
             .truncate(true)
             .open(path)?;
         let run_path = path.with_extension(format!("sort_{}.tmp", std::process::id()));
-        let run_file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&run_path)?;
-        let result = build_impl(
+        build_impl(
             self.node_size as usize,
             self.chunk_size,
             count,
             &get_bbox,
             out,
-            run_file,
-        );
-        let _ = fs::remove_file(&run_path);
-        result
+            &run_path,
+        )
     }
 }
 
@@ -329,7 +320,7 @@ fn build_impl<F>(
     count: usize,
     get_bbox: &F,
     file: File,
-    run_file: File,
+    scratch: &Path,
 ) -> io::Result<()>
 where
     F: Fn(usize) -> (f32, f32, f32, f32) + Sync,
@@ -374,9 +365,6 @@ where
 
     // ── phase 1 + 2: external sort → level-0 entries ─────────────────────────
     let _span_sort = tracing::info_span!("spatial_sort_and_merge", count).entered();
-    // `extsort::sort_and_merge` handles chunk sorting (parallel) and k-way merge.
-    // The `output` callback receives each original index in Morton-curve order
-    // and writes the corresponding leaf RTreeEntry directly into `out`.
     {
         let level0_off = level_offsets[0] as usize;
         let level0 = unsafe {
@@ -386,14 +374,14 @@ where
             )
         };
         let mut out_idx = 0usize;
-        extsort::sort_and_merge(
+        crate::morton::sort_by_morton(
             count,
             chunk_size,
             |i| {
                 let (min_lat, min_lon, max_lat, max_lon) = get_bbox(i);
-                morton_world((min_lat + max_lat) * 0.5, (min_lon + max_lon) * 0.5)
+                ((min_lat + max_lat) * 0.5, (min_lon + max_lon) * 0.5)
             },
-            run_file,
+            scratch,
             |idx| {
                 let (min_lat, min_lon, max_lat, max_lon) = get_bbox(idx as usize);
                 level0[out_idx] = RTreeEntry {
@@ -481,27 +469,6 @@ pub fn haversine_m(lat1: f32, lon1: f32, lat2: f32, lon2: f32) -> f32 {
     let a = (dlat / 2.0).sin().powi(2)
         + lat1.to_radians().cos() * lat2.to_radians().cos() * (dlon / 2.0).sin().powi(2);
     R * 2.0 * a.sqrt().asin()
-}
-
-// ── Z-order / Morton curve ────────────────────────────────────────────────────
-
-fn morton_world(lat: f32, lon: f32) -> u64 {
-    let x = ((lat + 90.0) / 180.0 * u32::MAX as f32) as u32;
-    let y = ((lon + 180.0) / 360.0 * u32::MAX as f32) as u32;
-    morton_encode(x, y)
-}
-
-fn morton_encode(x: u32, y: u32) -> u64 {
-    spread_bits(x as u64) | (spread_bits(y as u64) << 1)
-}
-
-fn spread_bits(mut v: u64) -> u64 {
-    v = (v | (v << 16)) & 0x0000_ffff_0000_ffff;
-    v = (v | (v << 8)) & 0x00ff_00ff_00ff_00ff;
-    v = (v | (v << 4)) & 0x0f0f_0f0f_0f0f_0f0f;
-    v = (v | (v << 2)) & 0x3333_3333_3333_3333;
-    v = (v | (v << 1)) & 0x5555_5555_5555_5555;
-    v
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────

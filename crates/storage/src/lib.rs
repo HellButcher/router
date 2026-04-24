@@ -1,6 +1,7 @@
 pub mod data;
 pub(crate) mod extsort;
 pub mod idindex;
+pub mod morton;
 mod pagefile;
 pub mod spatial;
 pub mod tablefile;
