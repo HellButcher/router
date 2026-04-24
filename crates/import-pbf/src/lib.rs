@@ -645,7 +645,7 @@ impl<R: io::BufRead + Send> Importer<R> {
             {
                 let _span = tracing::info_span!("build_node_spatial_index").entered();
                 SpatialIndexBuilder::new()
-                    .build(
+                    .build_presorted(
                         nodes_s.len(),
                         |i| {
                             let p = nodes_s[i].pos;

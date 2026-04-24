@@ -282,27 +282,67 @@ impl SpatialIndexBuilder {
     /// The closure may be a reference to a mmap'd slice — no bulk copy of
     /// coordinates is performed.  Must be `Sync` so rayon can share it across
     /// chunk-sort threads.
+    /// Build the index, sorting items by Morton key first.
     pub fn build<P, F>(&self, count: usize, get_bbox: F, path: P) -> io::Result<()>
     where
         F: Fn(usize) -> (f32, f32, f32, f32) + Sync,
         P: AsRef<Path>,
     {
         let path = path.as_ref();
-        let out = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path)?;
+        let file = open_output(path)?;
         let run_path = path.with_extension(format!("sort_{}.tmp", std::process::id()));
         build_impl(
             self.node_size as usize,
             self.chunk_size,
             count,
             &get_bbox,
-            out,
+            file,
             &run_path,
         )
+    }
+
+    /// Build the index assuming items are already in Morton order.
+    ///
+    /// Level-0 entries are written with a parallel pass; no external sort is
+    /// performed.  Use this after a Morton node reorder so the sort cost is
+    /// not paid twice.
+    pub fn build_presorted<P, F>(&self, count: usize, get_bbox: F, path: P) -> io::Result<()>
+    where
+        F: Fn(usize) -> (f32, f32, f32, f32) + Sync + Send,
+        P: AsRef<Path>,
+    {
+        use rayon::prelude::*;
+
+        let path = path.as_ref();
+        let node_size = self.node_size as usize;
+        let (level_lens, level_offsets, mut out) = alloc_output(node_size, count, path)?;
+
+        if count == 0 {
+            return out.flush();
+        }
+
+        let _span = tracing::info_span!("spatial_fill_presorted", count).entered();
+        let level0_off = level_offsets[0] as usize;
+        let level0 = unsafe {
+            std::slice::from_raw_parts_mut(
+                out[level0_off..].as_mut_ptr() as *mut RTreeEntry,
+                level_lens[0],
+            )
+        };
+        level0.par_iter_mut().enumerate().for_each(|(i, entry)| {
+            let (min_lat, min_lon, max_lat, max_lon) = get_bbox(i);
+            *entry = RTreeEntry {
+                min_lat,
+                min_lon,
+                max_lat,
+                max_lon,
+                index: i as u64,
+            };
+        });
+        drop(_span);
+
+        build_upper_levels(node_size, &level_lens, &level_offsets, &mut out)?;
+        out.flush()
     }
 }
 
@@ -313,6 +353,100 @@ impl Default for SpatialIndexBuilder {
 }
 
 // ── build implementation ──────────────────────────────────────────────────────
+
+fn open_output(path: &Path) -> io::Result<File> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
+}
+
+/// Allocate the output file, write the header, and return `(level_lens, level_offsets, mmap)`.
+fn alloc_output(
+    node_size: usize,
+    count: usize,
+    path: &Path,
+) -> io::Result<(Vec<usize>, [u64; MAX_LEVELS], MmapMut)> {
+    let file = open_output(path)?;
+    let level_lens = compute_level_lens(count, node_size);
+    let num_levels = level_lens.len();
+    let mut level_offsets = [0u64; MAX_LEVELS];
+    let mut off = HEADER_DISK_SIZE;
+    for (i, &len) in level_lens.iter().enumerate() {
+        level_offsets[i] = off as u64;
+        off += len * size_of::<RTreeEntry>();
+    }
+
+    file.set_len(off as u64)?;
+    let mut out = unsafe { MmapMut::map_mut(&file) }?;
+
+    let hdr = SpatialIndexHeader {
+        magic: MAGIC,
+        version: VERSION,
+        node_size: node_size as u32,
+        num_items: count as u64,
+        num_levels: num_levels as u32,
+        _reserved: 0,
+        level_offsets,
+    };
+    let hdr_bytes = unsafe {
+        std::slice::from_raw_parts(
+            &hdr as *const _ as *const u8,
+            size_of::<SpatialIndexHeader>(),
+        )
+    };
+    out[..size_of::<SpatialIndexHeader>()].copy_from_slice(hdr_bytes);
+    out[size_of::<SpatialIndexHeader>()..HEADER_DISK_SIZE].fill(0);
+
+    Ok((level_lens, level_offsets, out))
+}
+
+fn build_upper_levels(
+    node_size: usize,
+    level_lens: &[usize],
+    level_offsets: &[u64; MAX_LEVELS],
+    out: &mut MmapMut,
+) -> io::Result<()> {
+    let num_levels = level_lens.len();
+    let _span = tracing::info_span!("spatial_build_upper_levels", num_levels).entered();
+    for lv in 1..num_levels {
+        let prev_off = level_offsets[lv - 1] as usize;
+        let prev_len = level_lens[lv - 1];
+        let curr_off = level_offsets[lv] as usize;
+        let curr_len = level_lens[lv];
+        let (prev, curr) = unsafe {
+            let prev =
+                std::slice::from_raw_parts(out[prev_off..].as_ptr() as *const RTreeEntry, prev_len);
+            let curr = std::slice::from_raw_parts_mut(
+                out[curr_off..].as_mut_ptr() as *mut RTreeEntry,
+                curr_len,
+            );
+            (prev, curr)
+        };
+        for (i, chunk) in prev.chunks(node_size).enumerate() {
+            let mut min_lat = f32::INFINITY;
+            let mut min_lon = f32::INFINITY;
+            let mut max_lat = f32::NEG_INFINITY;
+            let mut max_lon = f32::NEG_INFINITY;
+            for e in chunk {
+                min_lat = min_lat.min(e.min_lat);
+                min_lon = min_lon.min(e.min_lon);
+                max_lat = max_lat.max(e.max_lat);
+                max_lon = max_lon.max(e.max_lon);
+            }
+            curr[i] = RTreeEntry {
+                min_lat,
+                min_lon,
+                max_lat,
+                max_lon,
+                index: 0,
+            };
+        }
+    }
+    Ok(())
+}
 
 fn build_impl<F>(
     node_size: usize,
@@ -325,7 +459,6 @@ fn build_impl<F>(
 where
     F: Fn(usize) -> (f32, f32, f32, f32) + Sync,
 {
-    // ── layout ────────────────────────────────────────────────────────────────
     let level_lens = compute_level_lens(count, node_size);
     let num_levels = level_lens.len();
     let mut level_offsets = [0u64; MAX_LEVELS];
@@ -334,13 +467,8 @@ where
         level_offsets[i] = off as u64;
         off += len * size_of::<RTreeEntry>();
     }
-    let file_size = off;
-
-    // ── pre-allocate & mmap the output file ───────────────────────────────────
-    file.set_len(file_size as u64)?;
+    file.set_len(off as u64)?;
     let mut out = unsafe { MmapMut::map_mut(&file) }?;
-
-    // ── header ────────────────────────────────────────────────────────────────
     let hdr = SpatialIndexHeader {
         magic: MAGIC,
         version: VERSION,
@@ -352,7 +480,7 @@ where
     };
     let hdr_bytes = unsafe {
         std::slice::from_raw_parts(
-            &hdr as *const SpatialIndexHeader as *const u8,
+            &hdr as *const _ as *const u8,
             size_of::<SpatialIndexHeader>(),
         )
     };
@@ -363,7 +491,6 @@ where
         return out.flush();
     }
 
-    // ── phase 1 + 2: external sort → level-0 entries ─────────────────────────
     let _span_sort = tracing::info_span!("spatial_sort_and_merge", count).entered();
     {
         let level0_off = level_offsets[0] as usize;
@@ -396,48 +523,9 @@ where
             },
         )?;
     }
-
     drop(_span_sort);
-    // ── phase 3: upper levels from the mmap'd output ──────────────────────────
-    let _span_upper = tracing::info_span!("spatial_build_upper_levels", num_levels).entered();
-    // Two non-overlapping slices into `out`: prev (read) and curr (write).
-    for lv in 1..num_levels {
-        let prev_off = level_offsets[lv - 1] as usize;
-        let prev_len = level_lens[lv - 1];
-        let curr_off = level_offsets[lv] as usize;
-        let curr_len = level_lens[lv];
 
-        let (prev, curr) = unsafe {
-            let prev =
-                std::slice::from_raw_parts(out[prev_off..].as_ptr() as *const RTreeEntry, prev_len);
-            let curr = std::slice::from_raw_parts_mut(
-                out[curr_off..].as_mut_ptr() as *mut RTreeEntry,
-                curr_len,
-            );
-            (prev, curr)
-        };
-
-        for (i, chunk) in prev.chunks(node_size).enumerate() {
-            let mut min_lat = f32::INFINITY;
-            let mut min_lon = f32::INFINITY;
-            let mut max_lat = f32::NEG_INFINITY;
-            let mut max_lon = f32::NEG_INFINITY;
-            for e in chunk {
-                min_lat = min_lat.min(e.min_lat);
-                min_lon = min_lon.min(e.min_lon);
-                max_lat = max_lat.max(e.max_lat);
-                max_lon = max_lon.max(e.max_lon);
-            }
-            curr[i] = RTreeEntry {
-                min_lat,
-                min_lon,
-                max_lat,
-                max_lon,
-                index: 0,
-            };
-        }
-    }
-
+    build_upper_levels(node_size, &level_lens, &level_offsets, &mut out)?;
     out.flush()
 }
 
