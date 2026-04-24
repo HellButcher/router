@@ -700,6 +700,66 @@ impl<R: io::BufRead + Send> Importer<R> {
             tracing::info!(count, "edges Morton-sorted");
         }
 
+        {
+            let _span = tracing::info_span!("morton_sort_ways").entered();
+
+            let ways_ref = ways.get_all().map_err(Error::WriteError)?;
+            let ways_slice: &[Way] = &ways_ref;
+            let count = ways_slice.len();
+
+            // Open way_id_index for in-place idx updates (id_entries[old_idx].idx = new_idx).
+            let mut way_id_index =
+                TableFile::<IdEntry>::open(self.target_dir.join("way_id_index.bin"))
+                    .map_err(Error::WriteError)?;
+            let reordered_path = self.target_dir.join("ways_reordered.bin");
+            let scratch = self.target_dir.join("ways.sort.tmp");
+            {
+                let id_entries = way_id_index.get_all_mut().map_err(Error::WriteError)?;
+                let mut new_way_idx: u64 = 0;
+                TableFile::<Way>::create_with_capacity(&reordered_path, count, |entries| {
+                    sort_by_key(
+                        count,
+                        DEFAULT_CHUNK_SIZE,
+                        |i| {
+                            ways_slice[i]
+                                .first_edge_idx
+                                .load(std::sync::atomic::Ordering::Relaxed)
+                        },
+                        &scratch,
+                        |old_idx| {
+                            entries[new_way_idx as usize] =
+                                unsafe { std::ptr::read(&ways_slice[old_idx as usize]) };
+                            id_entries[old_idx as usize].idx = new_way_idx;
+                            new_way_idx += 1;
+                            Ok(())
+                        },
+                    )
+                })
+                .map_err(Error::WriteError)?;
+            }
+            way_id_index.flush().map_err(Error::WriteError)?;
+
+            // Remap edge.way_idx to new way positions using the updated id_entries.
+            {
+                use rayon::prelude::*;
+                let _span = tracing::info_span!("remap_edge_way_indices").entered();
+                let id_entries_ref = way_id_index.get_all().map_err(Error::WriteError)?;
+                let id_entries: &[IdEntry] = &id_entries_ref;
+                let edges_slice = edges.get_all_mut().map_err(Error::WriteError)?;
+                edges_slice.par_iter_mut().for_each(|edge| {
+                    edge.way_idx = id_entries[edge.way_idx as usize].idx;
+                });
+                edges.flush().map_err(Error::WriteError)?;
+            }
+
+            drop(ways_ref);
+            drop(ways);
+            std::fs::rename(&reordered_path, self.target_dir.join("ways.bin"))
+                .map_err(Error::WriteError)?;
+
+            tracing::info!(count, "ways Morton-sorted");
+        }
+
         tracing::info!("building spatial indices");
         {
             let nodes_ref = nodes.get_all().map_err(Error::WriteError)?;
