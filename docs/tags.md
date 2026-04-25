@@ -39,47 +39,7 @@ Derived data is written to `Way`, `Edge`, and `Node` structs in `lib.rs`.
 
 ## Gaps & Planned Improvements
 
-### 1. Missing exclusion conditions
-
-**Status:** Done.
-
-`impassable=yes` and `status=impassable` are now parsed and cause `is_excluded()` to return `true`.
-
----
-
-### 2. Missing physical restriction: `maxlength`
-
-**Status:** Done.
-
-`maxlength` is parsed and stored as `DimRestriction::max_length_dm`. `VehicleDim` gained a matching
-`length_dm` field. Field order in both structs is height / width / length / weight.
-
----
-
-### 3. Missing speed-affecting tags
-
-#### 3a. `service` subtype
-
-**Status:** Done.
-
-`service=driveway/parking_aisle/alley` are mapped to dedicated `HighwayClass` variants
-(`ServiceDriveway`, `ServiceParkingAisle`, `ServiceAlley`), each with their own speed table
-entries per profile. Unknown service subtypes fall back to `HighwayClass::Service`.
-
-#### 3b. `maxspeed:advisory`
-
-**Status:** Done.
-
-Parsed and used as fallback in `lib.rs` when `maxspeed` is absent.
-
-#### 3c. `maxheight:physical` / `maxwidth:physical`
-
-**Status:** Done.
-
-Both `:physical` variants are parsed. `dim_restriction_from_tags` takes the minimum of the
-physical and plain values, so the binding constraint (structural or legal) always wins.
-
----
+(Done improvements where removed)
 
 ### 4. Missing navigation/guidance data
 
@@ -139,13 +99,8 @@ routing weights (e.g. wider roads have higher free-flow capacity).
 
 | Priority | Item | Effort | Status |
 |----------|------|--------|--------|
-| 1 | `impassable` / `status=impassable` exclusion | Small | Done |
-| 2 | `maxlength` | Small | Done |
-| 3 | `maxheight:physical` / `maxwidth:physical` | Small | Done |
-| 4 | `maxspeed:advisory` fallback | Small | Done |
-| 5 | `service` subtype speed penalties | Medium | Done |
-| 6 | `lanes` counts | Medium | Open |
-| 7 | String storage design | Medium (design) | Open — prerequisite for 8–10 |
-| 8 | `name` and `ref` | Medium | Open |
-| 9 | `destination` / `destination:ref` | Medium | Open |
-| 10 | `turn:lanes` | Medium | Open |
+| 1  | `lanes` counts | Medium | Open |
+| 2 | String storage design | Medium (design) | Open — prerequisite for 8–10 |
+| 3 | `name` and `ref` | Medium | Open |
+| 4 | `destination` / `destination:ref` | Medium | Open |
+| 5 | `turn:lanes` | Medium | Open |
