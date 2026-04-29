@@ -46,53 +46,100 @@ The criterion is OSM-structural: **shared node between ways = routing connection
 
 ## Target Data Model
 
+### Way (extended)
+
+`Way` gains per-direction access flags, max speed, and direction flags. In the common case — a bidirectional road with identical properties in both directions — a single `Way` entry covers both. When the directions differ (different speed, different access restrictions, different dimension limits, or bicycle contraflow on a oneway), **two consecutive `Way` entries** are emitted with the same OSM `WayId`: one for the forward direction, one for backward. The `HAS_PAIR` flag marks that a sibling entry exists.
+
+```rust
+struct Way {
+    id: WayId,
+    highway: HighwayClass,
+    flags: WayFlags,           // ONEWAY, TOLL, TUNNEL, BRIDGE,
+                               // DIRECTION_FORWARD, DIRECTION_BACKWARD, HAS_PAIR
+    surface_quality: SurfaceQuality,
+    access: EdgeFlags,         // NO_MOTOR, NO_HGV, NO_BICYCLE, NO_FOOT
+    max_speed: u8,
+    dim: DimRestriction,
+    first_edge_node_idx: AtomicU64,
+}
+```
+
+`DIRECTION_FORWARD | HAS_PAIR` means "this entry covers the forward direction; the backward sibling is the next entry". `DIRECTION_BACKWARD | HAS_PAIR` means "this entry covers the backward direction; the forward sibling is the previous entry". Neither flag set means the entry covers both directions identically.
+
+**Cases that require two entries:**
+- `maxspeed:forward` ≠ `maxspeed:backward`
+- Bicycle contraflow on a oneway (backward direction: `NO_MOTOR | NO_HGV`; forward: unrestricted)
+- oneway (backward direction: `NO_MOTOR | NO_HGV | NO_BICYCLE` (FOOT allowed); forward: unrestricted)
+- `maxheight:forward` ≠ `maxheight:backward` (or any other directional dimension)
+- Any explicit directional access tag (`vehicle:forward=no`, etc.)
+
+The old `Edge` fields `flags` and `max_speed` are eliminated — this information is now read from `Way` when building `EdgeNode`s.
+
 ### EdgeNode (replaces Edge + geometry Node)
 
-Each directed compressed segment between two intersection nodes becomes an `EdgeNode`. This is the **routing node** in the edge-based graph.
+Each directed compressed segment between two intersection nodes becomes an `EdgeNode`. This is the **routing node** in the edge-based graph. `way_idx` points to the directional `Way` entry directly, so access flags, speed, and dimensions are looked up without any direction logic at query time.
 
 ```rust
 struct EdgeNode {
-    from_node_idx: u32,    // intersection node index (segment start)
-    to_node_idx: u32,      // intersection node index (segment end)
-    way_idx: u32,
-    dist_m: u32,           // total Haversine distance along segment (sum of all node-pair distances)
-    flags: EdgeFlags,      // vehicle access restrictions
+    way_idx: u64,                          // index of the directional Way entry
+    dist_m: u32,                           // total Haversine distance (sum over all node pairs in segment)
     country_id: CountryId,
-    first_turn_idx: u32,   // head of outgoing TurnEdge linked list
-    geometry_offset: u32,  // offset into geometry table (intermediate node coordinates)
-    geometry_len: u16,     // number of intermediate coordinates (0 for direct segments)
-    max_speed: u8,
+    _pad: [u8; 3],
+    first_outbound_turn_idx: AtomicU64,    // head of outbound TurnEdge linked list (forward search)
+    first_inbound_turn_idx: AtomicU64,     // head of inbound TurnEdge linked list (backward search)
+    geometry_offset: u64,                  // index of first geometry point (= from_pos)
+    geometry_len: u32,                     // always ≥ 2; geometry[offset+len-1] = to_pos
 }
 ```
 
-Cost of traversing an `EdgeNode` = travel time computed from `dist_m`, `max_speed`, and `Way` metadata.
+Cost of traversal = travel time from `dist_m`, `Way::max_speed`, `Way::highway`, and `Way::surface_quality`.
 
 ### TurnEdge (new: encodes a legal turn)
 
-Each legal transition from one `EdgeNode` to another at a shared intersection node is a `TurnEdge`. This is the **routing edge** in the edge-based graph.
+Each legal transition `X→Y` is stored as a single `TurnEdge` that participates in **two linked lists simultaneously**: the outbound list of `X` (for forward search) and the inbound list of `Y` (for backward search). This mirrors exactly how the current `Edge` struct uses `next_edge` and `next_edge_reverse`.
 
 ```rust
 struct TurnEdge {
-    to_edge_node_idx: u32, // destination EdgeNode
-    turn_cost_ms: u16,     // penalty for this turn (0 = straight-on, higher for sharp turns)
-    next_turn_idx: u32,    // linked-list pointer: next TurnEdge for the same source EdgeNode
-}
+    from_edge_node_idx: u64,       // source EdgeNode (X)
+    to_edge_node_idx: u64,         // destination EdgeNode (Y)
+    turn_angle: i16,               // signed degrees: negative=left, positive=right, ±180=U-turn
+    restriction_mask: VehicleFlags,// vehicles prohibited by OSM restriction (0 = unrestricted)
+    _pad: [u8; 5],
+    next_outbound_idx: AtomicU64,  // next in X's outbound list
+    next_inbound_idx: AtomicU64,   // next in Y's inbound list
+}  // 40 bytes
 ```
 
-Turn restrictions = simply do not emit a `TurnEdge` for that (from, via, to) triple.  
-Turn penalties = assign a non-zero `turn_cost_ms`.
+Both lists are built in Phase 4 using lock-free CAS prepend, identical to how the current importer builds node→edge adjacency. `from` is needed when traversing Y's inbound list (to know the source); `to` is needed when traversing X's outbound list (to know the destination).
 
-### IntersectionNode (replaces Node for routing)
-
-After compression, only intersection nodes remain as first-class data. Geometry nodes are stored as coordinates in a flat geometry table, referenced by `EdgeNode::geometry_offset`.
+**Turn cost is computed dynamically by the `CostModel`**, consistent with how edge traversal cost is computed from `dist_m` + `max_speed` rather than stored precomputed. The `CostModel` gains:
 
 ```rust
-struct IntersectionNode {
-    id: NodeId,            // OSM node ID (for turn restriction resolution)
-    pos: LatLon,
-    flags: NodeFlags,      // traffic signals, toll, access restrictions
-}
+fn turn_cost(&self, turn: &TurnEdge, from: &EdgeNode, to: &EdgeNode) -> Option<usize>
 ```
+
+Returning `None` if the turn is blocked for this vehicle (via `restriction_mask`), otherwise a penalty in milliseconds derived from `turn_angle` using a configurable curve. The `from` and `to` `EdgeNode`s give access to their `Way` metadata (road class, speed), enabling profile-specific behaviour such as penalising turns from major onto minor roads.
+
+**Turn restrictions** are handled at two levels:
+- Turns prohibited for *all* vehicles → `TurnEdge` is not emitted at all
+- Turns prohibited for *some* vehicles → emitted with `restriction_mask` set; `CostModel` returns `None` for blocked vehicles
+
+**CH note:** since edge costs are already profile-specific, CH preprocessing is per-profile regardless. Dynamic turn costs add no new constraint here.
+
+**Note on dense arrays:** After CH preprocessing freezes the graph, linked lists can be flattened to dense offset arrays `(outbound_offset, outbound_len)` per `EdgeNode` for better cache performance during queries. Linked lists are kept through CH because shortcut insertion is O(1) CAS prepend; dense arrays would require O(n) rebuilds per contraction step.
+
+### No intersection node table at runtime
+
+Intersection nodes do not need to be a permanent data structure. Everything they provide can be moved elsewhere:
+
+- **Position** — not stored on `EdgeNode` at all. Endpoint positions are the first and last entries of the geometry sequence (see below). The A\* heuristic reads the last geometry entry; turn angle computation reads the last two entries for exit bearing.
+- **Traffic signal / toll penalty** — moved to a `TurnFlags` field on `TurnEdge`; every turn through that via-node carries the flag, and `CostModel::turn_cost` applies the time penalty.
+- **Barrier / access restrictions** — already in `TurnEdge::restriction_mask`.
+- **NodeId lookup and node snapping** — not needed at query time; dropped.
+
+Intersection nodes exist only as a **temporary in-memory structure during import** (Phases 2–8), used to compute reference counts, resolve turn restrictions, and compute segment geometry. They are never written to a permanent file.
+
+**`geometry.bin`** — a flat array of `LatLon`, one entry per intermediate (geometry-only) node, in the order they appear within each way segment. Referenced by `EdgeNode::geometry_offset` + `geometry_len`. No IDs or flags needed.
 
 ### Graph trait stays unchanged
 
@@ -122,163 +169,117 @@ PBF blobs (parallel) → nodes.bin, edges.bin, ways.bin
 ### New pipeline
 
 ```
-Phase 1: Parse nodes     → intersection_nodes.bin (after compression), geometry.bin
-Phase 2: Parse ways      → way reference counting → segment compression → edge_nodes.bin
-Phase 3: Parse relations → turn_restrictions (in-memory)
-Phase 4: Build turns     → turn_edges.bin (from intersection pairs + restrictions + penalties)
-Phase 5: Sort & index    → Morton sort, spatial index, ID indices
+Phase 1:  Parse PBF (single pass, parallel per blob)
+  1a: nodes     → temp_nodes.tmp  (NodeId, LatLon, NodeFlags, AtomicU8; sorted by NodeId from PBF)
+                  AtomicU8 is used for reference counting,
+  1b: ways      → ways.bin        (one or two Way entries per OSM way)
+                  node_refs.tmp   (flat resolved node-index lists per way, with way boundaries)
+                  increment ref_counts during parallel blob processing
+                    Endpoints add ENDPOINT flag,
+                    When count has reached 2, add INTERSECTION flag
+  1c: relations → turn_restrictions (Vec in memory; globally ~3–5 M entries)
+
+Phase 2:  Morton-sort ways by morton-code of first point → ways_reordered.bin
+          build WayId index
+
+Phase 3: Walk Ways and coresponding node_refs.tmp and Construct geometry and EdgeNodes.
+     3a:  Write LatLon of Way-Geometry into geometry.bin in order of Ways.
+          update way geometry offset,
+          record old offset in a mapping.
+     3b:  Construct EdgeNodes → edge_nodes.bin
+          emit one EdgeNode per directed compressed segment (forward + backward where applicable)
+
+Phase 4:  Morton-sort EdgeNodes by morton-code of first point → edge_nodes_reordered.bin
+          build edge spatial index (bounding box of geometry)
+
+Phase 5:  Build TurnEdges → turn_edges.bin
+          Take flags from temp_nodes (use the mapping, to get the old node offset)
+          
 ```
 
 ---
-
-## Phase 1: Node Parsing
-
-Identical to current: parse all OSM nodes into a temporary flat array sorted by NodeId (guaranteed by `Sort.Type_then_ID`). Store `(NodeId, LatLon, NodeFlags)`.
-
-At this stage **all** nodes are stored — we don't yet know which are intersection nodes. The intersection determination happens during way processing.
-
----
-
-## Phase 2: Way Processing and Graph Compression
-
-This is the most significant change. Ways must be processed in **two sub-passes**.
-
-### Sub-pass 2a: Reference counting
-
-Walk every way's node ref list and increment a counter for each node ID encountered. Also mark the first and last node ref of every way as an endpoint.
-
-A node is an **intersection node** if:
-- Its reference count across all ways ≥ 2, **or**
-- It is a way endpoint (first or last node of any way)
-
-Since way blobs may be processed in parallel, use a concurrent counter structure (e.g. a sorted array of `(NodeId, count)` merged after parallel collection, or a lock-free hashmap).
-
-The result is a set of intersection node IDs. All other referenced node IDs are geometry nodes.
-
-### Sub-pass 2b: Compressed segment building
-
-For each way (applying the same tag parsing as today), walk the node ref list and build compressed segments:
-
-```
-state: current_intersection_node = first node ref (always an endpoint → intersection)
-       accumulated_geometry = []
-       accumulated_dist_m = 0
-
-for each subsequent node ref N in the way:
-    pos_N = node_positions[N]
-    accumulated_dist_m += haversine(prev_pos, pos_N)
-
-    if N is an intersection node:
-        emit EdgeNode {
-            from: current_intersection_node,
-            to: N,
-            way_idx: current_way,
-            dist_m: accumulated_dist_m,
-            geometry: accumulated_geometry,   → write to geometry.bin
-            flags, max_speed, country_id, ...
-        }
-        if way is bidirectional (not oneway):
-            emit EdgeNode {
-                from: N,
-                to: current_intersection_node,
-                way_idx: current_way,
-                dist_m: accumulated_dist_m,
-                geometry: reverse(accumulated_geometry),
-                flags, max_speed (backward), ...
-            }
-        current_intersection_node = N
-        accumulated_geometry = []
-        accumulated_dist_m = 0
-    else:
-        accumulated_geometry.push(pos_N)
-```
-
-Oneway and bicycle contraflow logic is unchanged from the current importer.
 
 ### What replaces the current edge/node structures
 
 | Current | New |
 |---------|-----|
-| `Node` (all OSM nodes) | `IntersectionNode` (intersection nodes only) |
+| `Node` (all OSM nodes) | eliminated — positions stored in `geometry.bin`, flags on `TurnEdge` |
 | `Edge` (one per directed node pair) | `EdgeNode` (one per directed compressed segment) |
-| `Edge::next_edge` linked list | `TurnEdge::next_turn_idx` linked list |
-| `Node::first_edge_idx_outbound` | `EdgeNode::first_turn_idx` |
+| `Edge::flags`, `Edge::max_speed` | `Way::access`, `Way::max_speed` (per-direction via `HAS_PAIR`) |
+| `Edge::next_edge` / `next_edge_reverse` | `TurnEdge::next_outbound_idx` / `next_inbound_idx` |
+| `Node::first_edge_idx_outbound/inbound` | `EdgeNode::first_outbound_turn_idx` / `first_inbound_turn_idx` |
 
-Geometry nodes exist only in the flat `geometry.bin` table; they are not routing entities.
-
-### Distance on compressed edges
-
-`EdgeNode::dist_m` is the sum of Haversine distances across all node pairs in the segment. This is more accurate than computing a single Haversine from `from` to `to` node (which would be a chord, not the road length).
-
-`u32` is used instead of `u16` for `dist_m` — a compressed segment can span many kilometres on a rural road.
+All node positions (endpoints and intermediates) live in `geometry.bin` as a flat `LatLon` array. Intersection nodes exist only as a temporary in-memory structure during import.
 
 ---
 
-## Phase 3: Relation Parsing (Turn Restrictions)
+## Phase 1: PBF Parsing
 
-OSM relations come after ways in the PBF. At this point all `EdgeNode` indices are known.
+Single pass over the PBF, parallel per blob (unchanged parallelism model).
 
-### OSM relation structure
+**Phase 1a — nodes:** Parse all OSM nodes into `temp_nodes.tmp` sorted by `NodeId` (guaranteed by `Sort.Type_then_ID`). Store `(NodeId, LatLon, NodeFlags)`. Allocate two parallel arrays indexed by node position: `ref_counts: AtomicU8[]` (saturating at 2 — we only need to distinguish 0, 1, ≥2) and `endpoint_flags: AtomicBool[]`.
 
-```
-type=restriction (or type=restriction:<vehicle>)
-  member role=from   type=way    → from_way_id
-  member role=via    type=node   → via_node_id  (most common)
-  member role=to     type=way    → to_way_id
-tag restriction = no_right_turn | no_left_turn | no_u_turn | no_straight_on
-                | only_right_turn | only_left_turn | only_straight_on
-```
+**Phase 1b — ways:** For each OSM way:
+- Parse tags and emit one or two `Way` entries to `ways.bin` (see Way struct above for when two are needed).
+- Write the raw node-ID list to `node_refs.tmp` (flat: `[id0: i64, id1: i64, ...]` per way).
+- For each node ref: binary-search `temp_nodes.tmp`, then `tmp_nodes[idx].ref_count.fetch_add(1, saturating)`. Mark ENDPOINT flag for the first and last ref of each way.
 
-`only_*` restrictions mean: all turns from `from` at `via` **except** `to` are prohibited.
-
-### Resolution
-
-Build an index: `(WayId, NodeId) → EdgeNode` — i.e., given a way ID and an intersection node, find the EdgeNode whose way is that way and whose `to_node` is that node (for the incoming `from` way) or `from_node` is that node (for the outgoing `to` way).
-
-This index is small (one entry per EdgeNode) and fits in memory.
-
-For each restriction relation:
-1. Resolve `from_way_id` + `via_node_id` → incoming `EdgeNode` index
-2. Resolve `to_way_id` + `via_node_id` → outgoing `EdgeNode` index
-3. Store as `TurnRestriction { from_edge_node, to_edge_node, kind, vehicle_mask }`
-
-Collect into a table indexed by `via_node_idx` for efficient lookup in Phase 4.
+**Phase 1c — relations:** Parse `type=restriction` relations into an in-memory `Vec<RawRestriction>`. Relations are globally ~3–5 million entries and fit comfortably in memory. Each entry records `(from_way_id, via_node_id, to_way_id, restriction_kind, vehicle_mask)`.
 
 ---
 
-## Phase 4: Turn Edge Construction
-
-For each `IntersectionNode V`, gather:
-- All `EdgeNode`s whose `to_node_idx == V` → **incoming set**
-- All `EdgeNode`s whose `from_node_idx == V` → **outgoing set**
-
-For each pair `(incoming EdgeNode X, outgoing EdgeNode Y)`:
-
-1. **Check access:** if `Y.flags` blocks the vehicle, skip (no TurnEdge emitted for that vehicle — or store in flags).
-2. **Check restriction:** look up `TurnRestriction` table at `V` for `(X, Y)`. If prohibited, skip.
-3. **Check mandatory:** if any `only_*` restriction at `V` covers `X` and `Y` is not the mandated target, skip.
-4. **Compute turn angle** from the exit bearing of `X` and entry bearing of `Y`:
-   - Exit bearing of `X`: bearing from second-to-last geometry point to `V`
-   - Entry bearing of `Y`: bearing from `V` to first geometry point (or `Y.to_node` if no geometry)
-5. **Compute turn cost** from angle: 0 for straight-on, configurable curve for left/right, very high for U-turns (or skip entirely).
-6. Emit `TurnEdge { to_edge_node_idx: Y_idx, turn_cost_ms, next_turn_idx }` and link into `X`'s linked list.
-
-### U-turns
-
-An incoming `EdgeNode X` (way W, A→B) and outgoing `EdgeNode Y` (way W, B→A) at node B represents a U-turn. Detected by: `X.way_idx == Y.way_idx && X.from_node_idx == Y.to_node_idx`. Emit with a large penalty or skip entirely (configurable per road class).
+## Phase 2: Sort ways by Morton-Codes
 
 ---
 
-## Phase 5: Sorting and Indexing
+## Phase 3a: Resolve Nodes → geometry.bin
 
-Unchanged in structure from today, adapted to new table names:
+Walk `ways_reordered.tmp` sequentially. For each way, walk its node-index list and build compressed segments:
+Coordinates of ways are written to `geometry.bin` in sequence, and offset is updated in way.
+Record old offsets as pair `(new_index: usize, old_index: usize)` in a temporary file. this maps index `new_index + i` to `old_index + i` where `0 >= i > way.offsets_len`.
 
-- Morton-sort `IntersectionNode`s by position → spatial locality for A\* heuristic and spatial queries
-- Sort `EdgeNode`s by `from_node_idx` (Morton order) → outbound turns cluster for cache efficiency
-- Sort `TurnEdge`s by source `EdgeNode` index (already in linked-list order after Phase 4)
-- Build spatial index over `EdgeNode`s (bounding box of `from_pos` to `to_pos`) for snap-to-road queries
-- Build `NodeId → IntersectionNode` ID index (for turn restriction resolution and API lookups)
-- Build `WayId → Way` ID index (unchanged)
+`geometry_len` is always ≥ 2 (from_pos + to_pos, with zero or more intermediates). `dist_m` is the sum of Haversine distances along the segment — more accurate than a single chord distance.
+
+Each way records the `geometry_offset` of its first segment for use in Phase 4.
+
+---
+
+## Phase 3b: Construct EdgeNodes → edge_nodes.bin
+
+Walk `ways.bin` and the geometry offset table from Phase 3. For each compressed segment:
+
+- Emit a **forward** `EdgeNode { way_idx, dist_m, geometry_offset, geometry_len, ... }` referencing the forward `Way` entry.
+- If the way is bidirectional (not oneway), emit a **backward** `EdgeNode` referencing the backward `Way` entry (same geometry slice, reversed traversal — `geometry[offset + len - 1]` is the from-pos).
+
+Access flags, max speed, and dimensions come from the directional `Way` entry pointed to by `way_idx`. No direction logic is needed at query time.
+
+`country_id` is resolved here by looking up the from-position in the country boundary index.
+
+---
+
+## Phase 4: Morton-Sort EdgeNodes → edge_nodes_reordered.bin
+
+Sort `edge_nodes.bin` by the position of each EdgeNode's first geometry point (= from_pos = `geometry[geometry_offset]`). Build edge spatial index (bounding box per EdgeNode from `geometry[offset]` to `geometry[offset + len - 1]`). Remap `TurnEdge` linked-list heads after the sort.
+
+---
+
+## Phase 5: Build TurnEdges → turn_edges.bin
+
+Group EdgeNodes by their shared endpoint: `geometry[geometry_offset + geometry_len - 1]` is the `to_pos` / via-node position. EdgeNodes sharing the same endpoint position form an intersection.
+
+**Restriction resolution:** For each `RawRestriction (from_way_id, via_node_id, to_way_id, ...)`, find the matching EdgeNodes by scanning the EdgeNodes whose `Way::id == from_way_id` and whose last geometry point matches `via_node_id`'s position (looked up from `temp_nodes.tmp`). This scan is proportional to the number of restrictions (~millions), not the number of EdgeNodes (~hundreds of millions) — no large index is needed.
+
+For each intersection and each pair `(incoming EdgeNode X, outgoing EdgeNode Y)`:
+
+1. **Check restriction:** if `(X, Y)` is prohibited by a `no_*` restriction for any vehicle, set `restriction_mask` accordingly. If prohibited for all vehicles, skip entirely (no `TurnEdge` emitted).
+2. **Check mandatory:** if a `only_*` restriction covers X at this intersection and Y is not the mandated target, prohibit all vehicles.
+3. **Compute turn angle:** exit bearing of X from `geometry[X.offset + X.len - 2]` → `geometry[X.offset + X.len - 1]`; entry bearing of Y from `geometry[Y.offset]` → `geometry[Y.offset + 1]`. Angle is the signed difference.
+4. **Set `TurnFlags`:** if the via-node has `NodeFlags::TRAFFIC_SIGNALS` or `NodeFlags::TOLL`, set the corresponding `TurnFlags` bit.
+5. Emit `TurnEdge { from, to, turn_angle, restriction_mask, turn_flags, next_outbound, next_inbound }` and CAS-prepend into X's outbound list and Y's inbound list.
+
+### U-turns and sharp reversals
+
+A same-way U-turn (X and Y share `way_idx`, X arrives at the node Y departs from) is one special case. More generally, any turn with `|turn_angle| > 150°` is a sharp reversal — this covers dual-carriageway U-turns where the two directions are separate ways with different `way_idx`. The `CostModel` applies a configurable penalty curve: zero for straight-on, increasing for sharper turns, and a very high (or infinite) penalty at ±180°. This single mechanism handles both same-way U-turns and dual-carriageway reversals without special-casing.
 
 ---
 
@@ -321,12 +322,12 @@ Graph compression (Phase 2) must precede CH. CH on an uncompressed graph would b
 
 | File | Status | Description |
 |------|--------|-------------|
-| `nodes.bin` | → `intersection_nodes.bin` | Only intersection nodes |
+| `nodes.bin` | **removed** | No runtime node table; positions in `geometry.bin`, flags on `TurnEdge` |
+| `node_id_index.bin` | **removed** | Node lookup dropped |
+| `node_spatial.bin` | **removed** | Node snapping dropped |
 | `edges.bin` | → `edge_nodes.bin` | One per directed compressed segment |
 | *(new)* | `turn_edges.bin` | One per legal turn at each intersection |
-| *(new)* | `geometry.bin` | Flat array of `LatLon` for intermediate node coords |
-| `ways.bin` | Unchanged | Way metadata |
-| `node_id_index.bin` | Adapted | NodeId → IntersectionNode index |
+| *(new)* | `geometry.bin` | Flat `LatLon` array — all node positions (endpoints + intermediates) |
+| `ways.bin` | Extended | Gains `access`, `max_speed`, direction flags (`HAS_PAIR` etc.) |
 | `way_id_index.bin` | Unchanged | WayId → Way index |
-| `node_spatial.bin` | → `intersection_node_spatial.bin` | Spatial index over intersection nodes |
-| `edge_spatial.bin` | Adapted | Spatial index over EdgeNodes (compressed segments) |
+| `edge_spatial.bin` | Adapted | Spatial index over EdgeNodes (bounding box of geometry) |
