@@ -525,12 +525,7 @@ impl<R: io::BufRead + Send> Importer<R> {
                         return Err(Error::WayIdNotFound(way_id));
                     }
                     edge.way_idx = way_cursor as u64;
-                    if way_cursor != prev_way_cursor {
-                        ways_slice[way_cursor]
-                            .first_edge_idx
-                            .store(edge_idx as u64, Ordering::Relaxed);
-                        prev_way_cursor = way_cursor;
-                    }
+                    prev_way_cursor = way_cursor;
                 }
             }
 
@@ -688,8 +683,7 @@ impl<R: io::BufRead + Send> Importer<R> {
                 let _span = tracing::info_span!("remap_adjacency_lists").entered();
                 let nodes_ref = nodes.get_all_mut().map_err(Error::WriteError)?;
                 let edges_ref = edges.get_all_mut().map_err(Error::WriteError)?;
-                let ways_ref = ways.get_all_mut().map_err(Error::WriteError)?;
-                remap_adjacency_lists(nodes_ref, edges_ref, ways_ref, remap);
+                remap_adjacency_lists(nodes_ref, edges_ref, remap);
                 nodes.flush().map_err(Error::WriteError)?;
                 ways.flush().map_err(Error::WriteError)?;
             }
@@ -720,11 +714,8 @@ impl<R: io::BufRead + Send> Importer<R> {
                     sort_by_key(
                         count,
                         DEFAULT_CHUNK_SIZE,
-                        |i| {
-                            ways_slice[i]
-                                .first_edge_idx
-                                .load(std::sync::atomic::Ordering::Relaxed)
-                        },
+                        // TODO: sort by Morton code of first geometry point (Phase 2 redesign)
+                        |i| ways_slice[i].id.0 as u64,
                         &scratch,
                         |old_idx| {
                             entries[new_way_idx as usize] =

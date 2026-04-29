@@ -10,7 +10,9 @@ use self::{
 pub mod attrib;
 pub mod dim_restriction;
 pub mod edge;
+pub mod edge_node;
 pub mod node;
+pub mod turn_edge;
 pub mod way;
 
 // ── SimpleHeader ──────────────────────────────────────────────────────────────
@@ -193,12 +195,7 @@ pub fn link_nodes_and_edges(nodes: &[Node], edge_index: usize, edge: &Edge) {
 /// Use after an edge reorder instead of [`rebuild_adjacency_lists`] when the
 /// linked-list structure is still valid but every stored edge index needs to be
 /// translated to its new position.
-pub fn remap_adjacency_lists(
-    nodes: &[Node],
-    edges: &[Edge],
-    ways: &[crate::data::way::Way],
-    remap: &[u64],
-) {
+pub fn remap_adjacency_lists(nodes: &[Node], edges: &[Edge], remap: &[u64]) {
     use rayon::prelude::*;
     use std::sync::atomic::Ordering::Relaxed;
 
@@ -223,11 +220,6 @@ pub fn remap_adjacency_lists(
             .fetch_update(Relaxed, Relaxed, |v| Some(remap_fn(v)))
             .unwrap();
         edge.next_edge_reverse
-            .fetch_update(Relaxed, Relaxed, |v| Some(remap_fn(v)))
-            .unwrap();
-    });
-    ways.par_iter().for_each(|way| {
-        way.first_edge_idx
             .fetch_update(Relaxed, Relaxed, |v| Some(remap_fn(v)))
             .unwrap();
     });

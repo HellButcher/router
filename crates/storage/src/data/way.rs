@@ -1,9 +1,8 @@
-use std::sync::atomic::AtomicU64;
-
 use super::{
     SimpleHeader,
     attrib::{HighwayClass, SurfaceQuality, WayFlags},
     dim_restriction::DimRestriction,
+    edge::EdgeFlags,
 };
 use crate::{
     data::Versioned,
@@ -15,24 +14,25 @@ use crate::{
 #[derive(Copy, Clone, Debug, Default, PartialOrd, Ord, PartialEq, Eq)]
 pub struct WayId(pub i64);
 
-/// Sentinel: no edge registered as `first_edge_idx` yet.
-pub const NO_EDGE: u64 = u64::MAX;
-
-/// Shared OSM-way metadata. One entry per OSM way (deduplicated across segments).
+/// Shared OSM-way metadata. One or two entries per OSM way.
 ///
-/// Topology (from/to nodes, linked-list pointers) lives in [`Edge`].
+/// When a way has identical properties in both directions, a single entry covers both
+/// (`DIRECTION_FORWARD` and `DIRECTION_BACKWARD` are both unset). When directions
+/// differ, two consecutive entries are emitted with the same `id`: the first with
+/// `DIRECTION_FORWARD | HAS_PAIR`, the second with `DIRECTION_BACKWARD | HAS_PAIR`.
 #[repr(C)]
 #[derive(Debug)]
 pub struct Way {
     pub id: WayId,
-    /// Index of the first [`Edge`] in `edges.bin` that references this Way.
-    /// Used by the inspect API. Set to [`NO_EDGE`] until Phase 4.
-    pub first_edge_idx: AtomicU64,
     pub flags: WayFlags,
     pub highway: HighwayClass,
     /// Road surface quality tier.
     pub surface_quality: SurfaceQuality,
-    _pad_0: u8,
+    /// Per-direction vehicle access restrictions.
+    pub access: EdgeFlags,
+    /// Max speed in km/h for this direction (0 = use profile default for highway class).
+    pub max_speed: u8,
+    _pad: [u8; 3],
     /// Physical dimension restrictions (0 in any field = no restriction).
     pub dim: DimRestriction,
 }
@@ -49,20 +49,26 @@ impl Way {
     pub const fn new(id: WayId) -> Self {
         Self {
             id,
-            first_edge_idx: AtomicU64::new(NO_EDGE),
             flags: WayFlags::empty(),
-            _pad_0: 0,
             highway: HighwayClass::Unknown,
             surface_quality: SurfaceQuality::Unknown,
+            access: EdgeFlags::empty(),
+            max_speed: 0,
+            _pad: [0; 3],
             dim: DimRestriction::NONE,
         }
     }
 
-    /// Returns the index of the first edge on the way.
+    /// True when this entry covers the forward direction (or both, if `HAS_PAIR` is unset).
     #[inline]
-    pub fn first_edge_idx(&self) -> usize {
-        self.first_edge_idx
-            .load(std::sync::atomic::Ordering::Relaxed) as usize
+    pub fn is_forward(&self) -> bool {
+        !self.flags.contains(WayFlags::DIRECTION_BACKWARD)
+    }
+
+    /// True when this entry covers the backward direction (or both, if `HAS_PAIR` is unset).
+    #[inline]
+    pub fn is_backward(&self) -> bool {
+        !self.flags.contains(WayFlags::DIRECTION_FORWARD)
     }
 }
 

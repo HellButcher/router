@@ -2,20 +2,41 @@ use bitflags::bitflags;
 
 bitflags! {
     /// Way-level flags (shared across all edges of an OSM way).
-    /// Per-direction vehicle access restrictions live in [`EdgeFlags`] on each edge.
+    /// Per-direction vehicle access restrictions live in [`EdgeFlags`] on the `Way`.
     #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
     #[repr(transparent)]
     pub struct WayFlags: u8 {
         /// Way is only traversable from → to (forward direction).
-        const ONEWAY = 0x01;
+        const ONEWAY             = 0x01;
         /// Toll road — passing this way incurs a toll charge.
-        const TOLL   = 0x02;
+        const TOLL               = 0x02;
         /// Way passes through a tunnel.
-        const TUNNEL = 0x04;
+        const TUNNEL             = 0x04;
         /// Way is on a bridge.
-        const BRIDGE = 0x08;
+        const BRIDGE             = 0x08;
+        /// This entry covers the forward direction only; a backward sibling follows.
+        const DIRECTION_FORWARD  = 0x10;
+        /// This entry covers the backward direction only; the forward sibling precedes it.
+        const DIRECTION_BACKWARD = 0x20;
+        /// A paired sibling entry exists for the other direction.
+        const HAS_PAIR           = 0x40;
     }
 }
+
+bitflags! {
+    /// Turn-level flags set on [`TurnEdge`] when the via-node has special properties.
+    #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+    #[repr(transparent)]
+    pub struct TurnFlags: u8 {
+        /// Via-node has traffic signals — `CostModel` applies an intersection penalty.
+        const TRAFFIC_SIGNALS = 0x01;
+        /// Via-node is a toll booth.
+        const TOLL            = 0x02;
+    }
+}
+
+unsafe impl bytemuck::Zeroable for TurnFlags {}
+unsafe impl bytemuck::Pod for TurnFlags {}
 
 unsafe impl bytemuck::Zeroable for WayFlags {}
 unsafe impl bytemuck::Pod for WayFlags {}
