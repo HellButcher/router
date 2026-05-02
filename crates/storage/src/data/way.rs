@@ -20,8 +20,12 @@ pub struct WayId(pub i64);
 /// (`DIRECTION_FORWARD` and `DIRECTION_BACKWARD` are both unset). When directions
 /// differ, two consecutive entries are emitted with the same `id`: the first with
 /// `DIRECTION_FORWARD | HAS_PAIR`, the second with `DIRECTION_BACKWARD | HAS_PAIR`.
+///
+/// `node_refs_idx` and `node_refs_count` index into `node_refs.bin`: the resolved
+/// node-table indices for this way's geometry, in forward direction. Paired entries
+/// share the same slice.
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Way {
     pub id: WayId,
     pub flags: WayFlags,
@@ -32,12 +36,17 @@ pub struct Way {
     pub access: EdgeFlags,
     /// Max speed in km/h for this direction (0 = use profile default for highway class).
     pub max_speed: u8,
-    _pad: [u8; 3],
+    _pad: u8,
+    /// Number of entries in `node_refs.bin` starting at `node_refs_idx`.
+    pub node_refs_count: u16,
     /// Physical dimension restrictions (0 in any field = no restriction).
     pub dim: DimRestriction,
+    _pad2: u32,
+    /// Starting index into `node_refs.bin` for this way's node-table index list.
+    pub node_refs_idx: u64,
 }
 
-const _: () = assert!(std::mem::size_of::<Way>() == 24);
+const _: () = assert!(std::mem::size_of::<Way>() == 32);
 
 impl Default for Way {
     fn default() -> Self {
@@ -54,8 +63,11 @@ impl Way {
             surface_quality: SurfaceQuality::Unknown,
             access: EdgeFlags::empty(),
             max_speed: 0,
-            _pad: [0; 3],
+            _pad: 0,
+            node_refs_count: 0,
             dim: DimRestriction::NONE,
+            _pad2: 0,
+            node_refs_idx: 0,
         }
     }
 
@@ -86,5 +98,5 @@ impl TableData for Way {
 }
 
 impl Versioned for Way {
-    const VERSION: u32 = 6;
+    const VERSION: u32 = 7;
 }

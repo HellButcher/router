@@ -58,6 +58,12 @@ bitflags! {
         const TRAFFIC_SIGNALS = 0b0001_0000;
         /// Toll booth at this node.
         const TOLL            = 0b0010_0000;
+        /// Node is the first or last node of at least one OSM way.
+        /// Set during Phase 1; used in Phase 3b to identify segment endpoints.
+        const ENDPOINT        = 0b0100_0000;
+        /// Node is referenced by two or more distinct OSM ways.
+        /// Set during Phase 1; used in Phase 3b to identify intersection nodes.
+        const INTERSECTION    = 0b1000_0000;
     }
 }
 

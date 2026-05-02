@@ -83,12 +83,12 @@ impl NodeMeta {
             id: node.id.0,
             lat: node.pos.lat,
             lon: node.pos.lon,
-            no_motor: node.flags.contains(NodeFlags::NO_MOTOR),
-            no_hgv: node.flags.contains(NodeFlags::NO_HGV),
-            no_bicycle: node.flags.contains(NodeFlags::NO_BICYCLE),
-            no_foot: node.flags.contains(NodeFlags::NO_FOOT),
-            traffic_signals: node.flags.contains(NodeFlags::TRAFFIC_SIGNALS),
-            toll: node.flags.contains(NodeFlags::TOLL),
+            no_motor: node.node_flags().contains(NodeFlags::NO_MOTOR),
+            no_hgv: node.node_flags().contains(NodeFlags::NO_HGV),
+            no_bicycle: node.node_flags().contains(NodeFlags::NO_BICYCLE),
+            no_foot: node.node_flags().contains(NodeFlags::NO_FOOT),
+            traffic_signals: node.node_flags().contains(NodeFlags::TRAFFIC_SIGNALS),
+            toll: node.node_flags().contains(NodeFlags::TOLL),
         }
     }
 }

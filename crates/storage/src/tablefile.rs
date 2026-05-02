@@ -6,7 +6,7 @@ use std::mem::size_of;
 use std::ops::Deref;
 use std::path::Path;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard};
 use std::thread::JoinHandle;
 use std::{fs::OpenOptions, io};
@@ -55,13 +55,24 @@ pub struct TableFile<D> {
 
 pub struct Appender<D>(File, Arc<AppenderData>, PhantomData<fn(&D)>);
 
-pub struct AppenderJob<D: TableData> {
+type AppenderJobSender<D> = crossbeam_channel::Sender<(usize, usize, Vec<D>)>;
+
+pub struct OrderedAppenderJob<D: TableData> {
     counter: usize,
     join: JoinHandle<Result<Appender<D>>>,
-    sender: crossbeam_channel::Sender<(usize, Vec<D>)>,
+    sender: AppenderJobSender<D>,
 }
 
-pub struct AppenderResultHandle<D: TableData>(usize, crossbeam_channel::Sender<(usize, Vec<D>)>);
+pub struct OrderedAppenderHandle<D: TableData>(
+    usize,
+    crossbeam_channel::Sender<(usize, usize, Vec<D>)>,
+);
+
+pub struct WithIndexAppenderJob<D: TableData> {
+    next: AtomicUsize,
+    join: JoinHandle<Result<Appender<D>>>,
+    sender: AppenderJobSender<D>,
+}
 
 pub struct Ref<'l, T: ?Sized>(RwLockReadGuard<'l, MmapRaw>, NonNull<T>);
 
@@ -516,9 +527,6 @@ impl<D: TableData> TableFile<D> {
 
         Ok(())
     }
-
-    // TODO: mutable access to items / would require house-keeping for a locking-mechanism
-    // maybe seperate New-Type for this
 }
 
 // ── find (requires IndexKey) ──────────────────────────────────────────────────
@@ -640,19 +648,23 @@ unsafe fn slice_as_bytes<T>(data: &[T]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(ptr, len) }
 }
 
-fn write_all_vectored<W: Write>(w: &mut W, mut bufs: &mut [IoSlice<'_>]) -> io::Result<()> {
+fn write_all_vectored<W: Write>(w: &mut W, mut bufs: &mut [IoSlice<'_>]) -> io::Result<usize> {
     IoSlice::advance_slices(&mut bufs, 0);
+    let mut written = 0;
     while !bufs.is_empty() {
         match w.write_vectored(bufs) {
             Ok(0) => {
                 return Err(io::ErrorKind::WriteZero.into());
             }
-            Ok(n) => IoSlice::advance_slices(&mut bufs, n),
+            Ok(n) => {
+                IoSlice::advance_slices(&mut bufs, n);
+                written += n;
+            }
             Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
             Err(e) => return Err(e),
         }
     }
-    Ok(())
+    Ok(written)
 }
 
 // ── Appender / AppenderJob ────────────────────────────────────────────────────
@@ -664,48 +676,81 @@ impl<D: TableData> Appender<D> {
         self.0.write_all(bytes)
     }
 
-    pub fn append_vectored<'i>(&mut self, data: impl Iterator<Item = &'i [D]>) -> io::Result<()>
+    pub fn append_vectored<'i>(&mut self, data: impl Iterator<Item = &'i [D]>) -> io::Result<usize>
     where
         D: 'i,
     {
         self.1.appended.store(true, Ordering::Release);
         let mut bufs = [IoSlice::new(&[]); 64];
+        let mut written = 0;
         let mut i = 0;
         for data in data {
             if data.is_empty() {
                 continue;
             }
             if i >= bufs.len() {
-                write_all_vectored(&mut self.0, &mut bufs)?;
+                written += write_all_vectored(&mut self.0, &mut bufs)?;
                 i = 0;
             }
             bufs[i] = IoSlice::new(unsafe { slice_as_bytes(data) });
             i += 1;
         }
         if i > 0 {
-            write_all_vectored(&mut self.0, &mut bufs[..i])?;
+            written += write_all_vectored(&mut self.0, &mut bufs[..i])?;
         }
-        Ok(())
+        Ok(written)
     }
 }
 
 impl<D: TableData + Send + 'static> Appender<D> {
-    pub fn spawn(self) -> AppenderJob<D> {
+    /// Spawns a thread to receive and append buffers of data from multiple producers, ensuring that
+    /// buffers are appended in order.
+    ///
+    /// The order is determined by the order in which `AppenderResultHandle`s are created via `start()`.
+    /// Each `AppenderResultHandle` corresponds to a single buffer of data that will be sent to the appender thread.
+    /// The `AppenderJobHandle` can be sent to a different thread, and when the producer thread has finished preparing the buffer, it calls `done(buffer)` on the handle to send it to the appender thread.
+    /// The appender thread will receive these buffers, and will append them to the file in the correct order, even if they are sent out of order by the producers.
+    pub fn spawn_ordered(self) -> OrderedAppenderJob<D> {
+        let (sender, join) = self.spawn_appender_task();
+        OrderedAppenderJob {
+            counter: 0,
+            sender,
+            join,
+        }
+    }
+
+    /// Spawns a thread to receive and append buffers of data from multiple producers, without guaranteeing order, but will tell the producers the offset at which their buffer will be appended, so they can use that information to reference this data later.
+    pub fn spawn_with_index(mut self) -> Result<WithIndexAppenderJob<D>> {
+        let initial_pos = self.0.seek(SeekFrom::End(0))?;
+        let initial_data_pos = initial_pos as usize - TableFile::<D>::HEADER_SIZE;
+        if !initial_data_pos.is_multiple_of(TableFile::<D>::DATA_SIZE) {
+            return Err(io::Error::other("File not aligned"));
+        }
+        let initial_index = initial_data_pos / TableFile::<D>::DATA_SIZE;
+        let (sender, join) = self.spawn_appender_task();
+        Ok(WithIndexAppenderJob {
+            next: AtomicUsize::new(initial_index),
+            sender,
+            join,
+        })
+    }
+
+    fn spawn_appender_task(self) -> (AppenderJobSender<D>, JoinHandle<Result<Appender<D>>>) {
         let (s, r) = crossbeam_channel::unbounded();
         let join = std::thread::spawn(move || {
             let mut appender = self;
             let mut next = 0;
             let mut sorted = BTreeMap::new();
             let mut bufs = Vec::new();
-            while let Ok((i, dat)) = r.recv() {
-                sorted.insert(i, dat);
-                while let Ok((i, dat)) = r.try_recv() {
-                    sorted.insert(i, dat);
+            while let Ok((i, succ, dat)) = r.recv() {
+                sorted.insert(i, (succ, dat));
+                while let Ok((i, succ, dat)) = r.try_recv() {
+                    sorted.insert(i, (succ, dat));
                 }
                 while let Some(e) = sorted.first_entry() {
                     if e.key() == &next {
-                        next += 1;
-                        let buf: Vec<D> = e.remove();
+                        let (succ, buf): (usize, Vec<D>) = e.remove();
+                        next = succ;
                         if !buf.is_empty() {
                             bufs.push(buf);
                         }
@@ -715,7 +760,8 @@ impl<D: TableData + Send + 'static> Appender<D> {
                 }
                 if !bufs.is_empty() {
                     if bufs.len() == 1 {
-                        appender.append(&bufs[0])?;
+                        let buf = &bufs[0];
+                        appender.append(buf)?;
                     } else {
                         appender.append_vectored(bufs.iter().map(Deref::deref))?;
                     }
@@ -724,41 +770,53 @@ impl<D: TableData + Send + 'static> Appender<D> {
             }
             Ok(appender)
         });
-        AppenderJob {
-            counter: 0,
-            sender: s,
-            join,
-        }
+        (s, join)
     }
 }
 
-impl<D: TableData> AppenderJob<D> {
-    pub fn start(&mut self) -> AppenderResultHandle<D> {
+impl<D: TableData> OrderedAppenderJob<D> {
+    pub fn start(&mut self) -> OrderedAppenderHandle<D> {
         let i = self.counter;
         self.counter += 1;
-        AppenderResultHandle(i, self.sender.clone())
+        OrderedAppenderHandle(i, self.sender.clone())
     }
 
     pub fn join(self) -> Result<Appender<D>> {
-        let AppenderJob { join, sender, .. } = self;
+        let OrderedAppenderJob { join, sender, .. } = self;
         drop(sender);
         let appender = join.join().unwrap()?;
         Ok(appender)
     }
 }
 
-impl<D: TableData> AppenderResultHandle<D> {
+impl<D: TableData> OrderedAppenderHandle<D> {
     pub fn done(mut self, result: Vec<D>) {
-        self.1.send((self.0, result)).unwrap();
+        self.1.send((self.0, self.0 + 1, result)).unwrap();
         self.0 = usize::MAX;
     }
 }
 
-impl<D: TableData> Drop for AppenderResultHandle<D> {
+impl<D: TableData> Drop for OrderedAppenderHandle<D> {
     fn drop(&mut self) {
         if self.0 != usize::MAX {
-            self.1.send((self.0, Vec::new())).unwrap();
+            self.1.send((self.0, self.0 + 1, Vec::new())).unwrap();
         }
+    }
+}
+
+impl<D: TableData> WithIndexAppenderJob<D> {
+    pub fn append(&self, data: Vec<D>) -> usize {
+        let len = data.len();
+        let i = self.next.fetch_add(len, Ordering::AcqRel);
+        self.sender.send((i, i + len, data)).unwrap();
+        i
+    }
+
+    pub fn join(self) -> Result<Appender<D>> {
+        let WithIndexAppenderJob { join, sender, .. } = self;
+        drop(sender);
+        let appender = join.join().unwrap()?;
+        Ok(appender)
     }
 }
 

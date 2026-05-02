@@ -131,12 +131,13 @@ impl CostModel for SpeedMap<'_> {
         if node_is_blocked(node, self.profile.vehicle_type) {
             return None;
         }
-        let mut penalty = if node.flags.contains(NodeFlags::TRAFFIC_SIGNALS) {
+        let flags = node.node_flags();
+        let mut penalty = if flags.contains(NodeFlags::TRAFFIC_SIGNALS) {
             self.profile.traffic_signal_penalty_ms as usize
         } else {
             0
         };
-        if node.flags.contains(NodeFlags::TOLL) {
+        if flags.contains(NodeFlags::TOLL) {
             if self.avoid_toll {
                 return None;
             }
@@ -287,13 +288,14 @@ pub(crate) fn edge_is_blocked(edge: &Edge, vehicle: VehicleType) -> bool {
 }
 
 pub(crate) fn node_is_blocked(node: &Node, vehicle: VehicleType) -> bool {
+    let flags = node.node_flags();
     match vehicle {
-        VehicleType::Car => node.flags.contains(NodeFlags::NO_MOTOR),
+        VehicleType::Car => flags.contains(NodeFlags::NO_MOTOR),
         VehicleType::Hgv => {
-            node.flags.contains(NodeFlags::NO_MOTOR) || node.flags.contains(NodeFlags::NO_HGV)
+            flags.contains(NodeFlags::NO_MOTOR) || flags.contains(NodeFlags::NO_HGV)
         }
-        VehicleType::Bicycle => node.flags.contains(NodeFlags::NO_BICYCLE),
-        VehicleType::Foot => node.flags.contains(NodeFlags::NO_FOOT),
+        VehicleType::Bicycle => flags.contains(NodeFlags::NO_BICYCLE),
+        VehicleType::Foot => flags.contains(NodeFlags::NO_FOOT),
     }
 }
 

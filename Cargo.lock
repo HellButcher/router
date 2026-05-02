@@ -1442,6 +1442,7 @@ dependencies = [
  "geo",
  "geojson",
  "memmap2",
+ "osm-pbf-proto",
  "osm-pbf-reader",
  "rayon",
  "router-storage",

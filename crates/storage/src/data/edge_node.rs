@@ -24,9 +24,10 @@ pub struct EdgeNode {
     pub dist_m: u32,
     /// Country where the segment's from-position is located.
     pub country_id: CountryId,
-    /// Signed 24-bit geometry length packed as little-endian bytes.
-    /// Sign encodes traversal direction; magnitude is the slice length (always ≥ 2).
-    geometry_len_i24: [u8; 3],
+    _pad: u8,
+    /// Signed geometry count. Sign encodes traversal direction; magnitude is slice length (≥ 2).
+    /// positive → forward, negative → backward.
+    pub geometry_len: i16,
     /// Head of outbound [`TurnEdge`] linked list (forward search).
     pub(crate) first_outbound_turn_idx: AtomicU64,
     /// Head of inbound [`TurnEdge`] linked list (backward search).
@@ -44,18 +45,18 @@ impl EdgeNode {
         dist_m: u32,
         country_id: CountryId,
         geometry_from_idx: u64,
-        geometry_len: i32,
+        geometry_len: i16,
     ) -> Self {
-        debug_assert!(geometry_len.abs() >= 2, "geometry_len magnitude must be ≥ 2");
         debug_assert!(
-            geometry_len > -(1 << 23) && geometry_len < (1 << 23),
-            "geometry_len out of i24 range"
+            geometry_len.abs() >= 2,
+            "geometry_len magnitude must be ≥ 2"
         );
         Self {
             way_idx,
             dist_m,
             country_id,
-            geometry_len_i24: Self::pack_i24(geometry_len),
+            _pad: 0,
+            geometry_len,
             first_outbound_turn_idx: AtomicU64::new(NO_TURN),
             first_inbound_turn_idx: AtomicU64::new(NO_TURN),
             geometry_from_idx,
@@ -73,22 +74,16 @@ impl EdgeNode {
         self.geometry_from_idx as usize + self.geometry_count() as usize
     }
 
-    /// Signed 24-bit geometry length. Positive = forward, negative = backward.
-    #[inline]
-    pub fn geometry_len(&self) -> i32 {
-        Self::unpack_i24(self.geometry_len_i24)
-    }
-
     /// Number of geometry points in the slice (always ≥ 2).
     #[inline]
-    pub fn geometry_count(&self) -> u32 {
-        self.geometry_len().unsigned_abs()
+    pub fn geometry_count(&self) -> u16 {
+        self.geometry_len.unsigned_abs()
     }
 
     /// True if this EdgeNode traverses its geometry slice in reverse (backward direction).
     #[inline]
     pub fn is_backward(&self) -> bool {
-        self.geometry_len() < 0
+        self.geometry_len < 0
     }
 
     #[inline]
@@ -101,19 +96,6 @@ impl EdgeNode {
     pub fn first_inbound_turn_idx(&self) -> usize {
         self.first_inbound_turn_idx
             .load(std::sync::atomic::Ordering::Relaxed) as usize
-    }
-
-    #[inline]
-    fn pack_i24(v: i32) -> [u8; 3] {
-        let b = v.to_le_bytes();
-        [b[0], b[1], b[2]]
-    }
-
-    #[inline]
-    fn unpack_i24(b: [u8; 3]) -> i32 {
-        // Sign-extend from 24 to 32 bits.
-        let raw = i32::from_le_bytes([b[0], b[1], b[2], 0]);
-        (raw << 8) >> 8
     }
 }
 

@@ -110,10 +110,12 @@ pub(crate) fn sort_and_merge(
     }
 
     while let Some((_, chunk_id, pos)) = heap.pop() {
-        output(chunk_slice(chunk_id)[pos].index)?;
+        let cslice = chunk_slice(chunk_id);
+        output(cslice[pos].index)?;
         let next = pos + 1;
-        if next < chunk_slice(chunk_id).len() {
-            heap.push((Reverse(chunk_slice(chunk_id)[next].key), chunk_id, next));
+        if next < cslice.len() {
+            // put next chunk item to heap
+            heap.push((Reverse(cslice[next].key), chunk_id, next));
         }
     }
 

@@ -1,3 +1,5 @@
+use osm_pbf_proto::elements::{DenseNodeRef, NodeRef, WayRef};
+
 macro_rules! define_tag_enum {
     (
         $(#[$m:meta])*
@@ -440,6 +442,13 @@ impl<'s, T> Conditional<'s,T> {
 */
 
 impl<'s> WayTags<'s> {
+    pub fn parse_tags(way: WayRef<'s>) -> Self {
+        let mut tags = Self::default();
+        way.tags().iter().for_each(|(k, v)| {
+            tags.set_tag(k, v);
+        });
+        tags
+    }
     pub fn set_tag(&mut self, k: &str, v: &'s str) -> bool {
         match k {
             "highway" => self.highway = FromTag::from_tag(v),
@@ -622,6 +631,22 @@ pub struct NodeTags<'s> {
 }
 
 impl<'s> NodeTags<'s> {
+    pub fn parse_tags(node: NodeRef<'s>) -> Self {
+        let mut tags = Self::default();
+        node.tags().iter().for_each(|(k, v)| {
+            tags.set_tag(k, v);
+        });
+        tags
+    }
+
+    pub fn parse_tags_dense(node: DenseNodeRef<'s>) -> Self {
+        let mut tags = Self::default();
+        node.tags().iter().for_each(|(k, v)| {
+            tags.set_tag(k, v);
+        });
+        tags
+    }
+
     pub fn set_tag(&mut self, k: &str, v: &'s str) -> bool {
         match k {
             "barrier" => self.barrier = FromTag::from_tag(v),

@@ -27,3 +27,8 @@ router-storage.workspace = true
 git = "https://github.com/HellButcher/osm-pbf.git"
 branch = "feat/new-protobuf-v4"
 #path = "../../../osm-pbf/reader"
+
+[dependencies.osm-pbf-proto]
+git = "https://github.com/HellButcher/osm-pbf.git"
+branch = "feat/new-protobuf-v4"
+#path = "../../../osm-pbf/proto"

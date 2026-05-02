@@ -1,4 +1,4 @@
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64};
 
 use router_types::coordinate::LatLon;
 
@@ -24,8 +24,9 @@ pub struct Node {
     pub(crate) first_edge_idx_outbound: AtomicU64,
     pub(crate) first_edge_idx_inbound: AtomicU64,
     /// Access restrictions and routing hints derived from OSM node tags.
-    pub flags: NodeFlags,
-    _pad: [u8; 7],
+    pub flags: AtomicU8,
+    _pad: [u8; 3],
+    pub num_refs: AtomicU32,
 }
 
 impl Default for Node {
@@ -42,9 +43,15 @@ impl Node {
             pos,
             first_edge_idx_outbound: AtomicU64::new(NO_EDGE),
             first_edge_idx_inbound: AtomicU64::new(NO_EDGE),
-            flags: NodeFlags::empty(),
-            _pad: [0; 7],
+            flags: AtomicU8::new(0),
+            _pad: [0; 3],
+            num_refs: AtomicU32::new(0),
         }
+    }
+
+    #[inline]
+    pub fn node_flags(&self) -> NodeFlags {
+        NodeFlags::from_bits_truncate(self.flags.load(std::sync::atomic::Ordering::Relaxed))
     }
 
     /// Returns the linked-list pointer to the first outbound way, or [`NO_WAY`].
