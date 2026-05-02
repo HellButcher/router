@@ -11,6 +11,7 @@ pub mod attrib;
 pub mod dim_restriction;
 pub mod edge;
 pub mod edge_node;
+pub mod geometry;
 pub mod node;
 pub mod pod64;
 pub mod turn_edge;

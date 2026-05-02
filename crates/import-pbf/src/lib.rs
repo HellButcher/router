@@ -4,18 +4,21 @@ mod tags_convert;
 
 use osm_pbf_reader::Blobs;
 use rayon::iter::{
-    IndexedParallelIterator, IntoParallelRefMutIterator, ParallelBridge, ParallelIterator,
+    IndexedParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelBridge,
+    ParallelIterator,
 };
 use router_storage::{
     data::{
         attrib::{NodeFlags, WayFlags},
         edge::EdgeFlags,
+        edge_node::EdgeNode,
         node::{Node, NodeId},
         pod64::Pod64,
         way::{Way, WayId},
     },
     idindex::IdEntry,
     morton::{DEFAULT_CHUNK_SIZE, sort_by_morton},
+    spatial::haversine_m,
     tablefile::TableFile,
 };
 use router_types::coordinate::LatLon;
@@ -262,20 +265,18 @@ impl<R: io::BufRead + Send> Importer<R> {
             .collect();
 
         // ── Phase 1a: temp_nodes.bin ─────────────────────────────────────────
+        let ways_path = self.target_dir.join("ways.bin");
+        let way_nodes_path = self.target_dir.join("way_nodes.bin");
 
         let mut nodes = TableFile::<Node>::open_override(self.target_dir.join("nodes.bin"))
             .map_err(Error::WriteError)?;
-        let ways_path = self.target_dir.join("ways.bin");
         let mut ways = TableFile::<Way>::open_override(&ways_path).map_err(Error::WriteError)?;
         let mut way_nodes =
-            TableFile::<Pod64>::open_override(self.target_dir.join("way_nodes.bin"))
-                .map_err(Error::WriteError)?;
+            TableFile::<Pod64>::open_override(&way_nodes_path).map_err(Error::WriteError)?;
 
-        // node_ids_per_way[i] = raw OSM node IDs for way i (in ways.bin order, first entry).
-        // Owned i64 values, no blob borrows.
-        let raw_restrictions: Mutex<Vec<RawRestriction>> = Mutex::new(Vec::new());
-
+        let restrictions;
         {
+            let _span = tracing::info_span!("parse_blobs").entered();
             let mut nodes_append = nodes.appender().map_err(Error::WriteError)?.spawn_ordered();
             let mut ways_append = ways.appender().map_err(Error::WriteError)?.spawn_ordered();
             let way_nodes_append = way_nodes
@@ -283,8 +284,9 @@ impl<R: io::BufRead + Send> Importer<R> {
                 .map_err(Error::WriteError)?
                 .spawn_with_index()
                 .map_err(Error::WriteError)?;
-
-            let _span = tracing::info_span!("parse_blobs").entered();
+            // node_ids_per_way[i] = raw OSM node IDs for way i (in ways.bin order, first entry).
+            // Owned i64 values, no blob borrows.
+            let raw_restrictions: Mutex<Vec<RawRestriction>> = Mutex::new(Vec::new());
             blobs
                 .into_iter()
                 .map(|b| (nodes_append.start(), ways_append.start(), b))
@@ -454,7 +456,7 @@ impl<R: io::BufRead + Send> Importer<R> {
                                 fwd.max_speed = fwd_speed;
                                 fwd.dim = dim;
                                 fwd.node_refs_idx = node_refs_idx as u64;
-                                fwd.node_refs_count = node_refs_idx as u16;
+                                fwd.node_refs_count = node_refs_len as u16;
                                 out_ways.push(fwd);
                                 let mut bwd = Way::new(id);
                                 bwd.highway = highway_class;
@@ -464,7 +466,7 @@ impl<R: io::BufRead + Send> Importer<R> {
                                 bwd.max_speed = bwd_speed;
                                 bwd.dim = dim;
                                 bwd.node_refs_idx = node_refs_idx as u64;
-                                bwd.node_refs_count = node_refs_idx as u16;
+                                bwd.node_refs_count = node_refs_len as u16;
                                 out_ways.push(bwd);
                             } else {
                                 // Bidirectional, identical properties in both directions.
@@ -542,9 +544,12 @@ impl<R: io::BufRead + Send> Importer<R> {
             nodes_append.join().expect("node-writer thread panicked");
             ways_append.join().expect("way-writer thread panicked");
             way_nodes_append.join().expect("way-writer thread panicked");
-        }
+            restrictions = raw_restrictions.into_inner().unwrap();
 
-        let restrictions = raw_restrictions.into_inner().unwrap();
+            nodes.flush().map_err(Error::WriteError)?;
+        }
+        let nodes_ref = nodes.get_all().map_err(Error::WriteError)?;
+        let nodes_slice: &[Node] = &nodes_ref;
 
         tracing::info!(
             nodes = nodes.len(),
@@ -554,15 +559,14 @@ impl<R: io::BufRead + Send> Importer<R> {
             "parsing pbf blobs complete"
         );
 
-        nodes.flush().map_err(Error::WriteError)?;
-
         // ── Phase 2a: Build WayId index from already sorted Ways ─────────────
-        let mut way_id_index = {
+        let mut way_id_index;
+        {
             let _span = tracing::info_span!("build_way_id_index").entered();
             let ways_ref = ways.get_all().map_err(Error::WriteError)?;
             let ways_slice: &[Way] = &ways_ref;
             let count = ways_slice.len();
-            let mut index = TableFile::<IdEntry>::create_with_capacity(
+            way_id_index = TableFile::<IdEntry>::create_with_capacity(
                 self.target_dir.join("way_id_index.bin"),
                 count,
                 |entries| {
@@ -574,23 +578,24 @@ impl<R: io::BufRead + Send> Importer<R> {
                 },
             )
             .map_err(Error::WriteError)?;
-            index.build_index_sorted().map_err(Error::WriteError)?;
+            way_id_index
+                .build_index_sorted()
+                .map_err(Error::WriteError)?;
             tracing::info!(count, "way id index written");
-            index
-        };
+        }
 
         // ── Phase 2b: Morton-sort ways by first geometry point ─────────────
         {
             let _span = tracing::info_span!("morton_sort_ways").entered();
-
-            let ways_ref = ways.get_all().map_err(Error::WriteError)?;
-            let ways_slice: &[Way] = &ways_ref;
-            let count = ways_slice.len();
-            let nodes_ref = nodes.get_all().map_err(Error::WriteError)?;
-            let nodes_slice: &[Node] = &nodes_ref;
             let reordered_path = self.target_dir.join("ways_reordered.bin");
-            let scratch = self.target_dir.join("ways.sort.tmp");
+            let count;
             {
+                let ways_ref = ways.get_all().map_err(Error::WriteError)?;
+                let ways_slice: &[Way] = &ways_ref;
+                count = ways_slice.len();
+                let way_nodes_ref = way_nodes.get_all().map_err(Error::WriteError)?;
+                let way_nodes_slice: &[Pod64] = &way_nodes_ref;
+                let scratch = self.target_dir.join("ways.sort.tmp");
                 let id_entries = way_id_index.get_all_mut().map_err(Error::WriteError)?;
                 let mut new_way_idx: u64 = 0;
                 TableFile::<Way>::create_with_capacity(&reordered_path, count, |entries| {
@@ -599,8 +604,8 @@ impl<R: io::BufRead + Send> Importer<R> {
                         DEFAULT_CHUNK_SIZE,
                         |i| {
                             let way = &ways_slice[i];
-                            let node = &nodes_slice[way.node_refs_idx as usize];
-                            node.pos.into()
+                            let node_idx = way_nodes_slice[way.node_refs_idx as usize].0 as usize;
+                            nodes_slice[node_idx].pos.into()
                         },
                         &scratch,
                         |old_idx| {
@@ -616,19 +621,208 @@ impl<R: io::BufRead + Send> Importer<R> {
             }
             way_id_index.flush().map_err(Error::WriteError)?;
 
-            drop(ways_ref);
             drop(ways);
             std::fs::rename(&reordered_path, &ways_path).map_err(Error::WriteError)?;
 
             tracing::info!(count, "ways Morton-sorted");
         }
+        // re-open ways (now in Morton order) for subsequent phases
+        let mut ways = TableFile::<Way>::open(&ways_path).map_err(Error::WriteError)?;
 
-        // ── Phase 3–5: geometry, EdgeNodes, TurnEdges ─────────────────────
-        // TODO: build EdgeNode table by splitting ways at intersections and endpoints, populating edge attributes from way properties and first/last node properties, and writing to edges.bin in way order (i.e. edge.way_idx is the index of the parent way in ways.bin).
-        // TODO: build turn edges from edges and restrictions, writing to turns.bin in arbitrary order.
-        // TODO: write references node coordinates geometry.bin in way order
+        // ── Phase 3: geometry.bin + edge_nodes.bin ────────────────────────
+        // ── 3a: reorder way_nodes + write geometry + update way.node_refs_idx ──
+        {
+            let _span = tracing::info_span!("reorder_way_nodes_and_geometry").entered();
+            let way_nodes_reordered_path = self.target_dir.join("way_nodes_reordered.bin");
+            let geometry_path = self.target_dir.join("geometry.bin");
 
-        // TODO: build EdgeNode Spatial index
+            {
+                let mut new_way_nodes =
+                    TableFile::<Pod64>::open_override(&way_nodes_reordered_path)
+                        .map_err(Error::WriteError)?;
+                let mut geometry = TableFile::<LatLon>::open_override(&geometry_path)
+                    .map_err(Error::WriteError)?;
+
+                let mut new_way_nodes_appender =
+                    new_way_nodes.appender().map_err(Error::WriteError)?;
+                let mut geometry_appender = geometry.appender().map_err(Error::WriteError)?;
+
+                let ways_mut = ways.get_all_mut().map_err(Error::WriteError)?;
+                let way_nodes_ref = way_nodes.get_all().map_err(Error::WriteError)?;
+                let way_nodes_slice: &[Pod64] = &way_nodes_ref;
+
+                let mut node_indices_buf: Vec<Pod64> = Vec::new();
+                let mut geometry_buf: Vec<LatLon> = Vec::new();
+
+                let mut geo_offset: u64 = 0;
+                for way in ways_mut.iter_mut() {
+                    let old_start = way.node_refs_idx as usize;
+                    let len = way.node_refs_count as usize;
+
+                    if way.flags.contains(WayFlags::HAS_PAIR)
+                        && way.flags.contains(WayFlags::DIRECTION_BACKWARD)
+                    {
+                        way.node_refs_idx = geo_offset - len as u64;
+                        continue;
+                    }
+
+                    node_indices_buf.clear();
+                    geometry_buf.clear();
+                    for j in 0..len {
+                        let pod = way_nodes_slice[old_start + j];
+                        node_indices_buf.push(pod);
+                        geometry_buf.push(nodes_slice[pod.0 as usize].pos);
+                    }
+                    new_way_nodes_appender
+                        .append(&node_indices_buf)
+                        .map_err(Error::WriteError)?;
+                    geometry_appender
+                        .append(&geometry_buf)
+                        .map_err(Error::WriteError)?;
+
+                    way.node_refs_idx = geo_offset;
+                    geo_offset += len as u64;
+                }
+
+                new_way_nodes.flush().map_err(Error::WriteError)?;
+                geometry.flush().map_err(Error::WriteError)?;
+                ways.flush().map_err(Error::WriteError)?;
+            }
+
+            drop(way_nodes);
+            std::fs::rename(&way_nodes_reordered_path, &way_nodes_path)
+                .map_err(Error::WriteError)?;
+
+            tracing::info!("geometry and way_nodes reordered and written");
+        }
+        // re-open way_nodes (now in updated order) for subsequent phases
+        let way_nodes = TableFile::<Pod64>::open(&way_nodes_path).map_err(Error::WriteError)?;
+        let way_nodes_ref = way_nodes.get_all().map_err(Error::WriteError)?;
+        let way_nodes_slice: &[Pod64] = &way_nodes_ref;
+
+        let country_lookup = match &self.country_boundaries {
+            Some(p) => {
+                let _span = tracing::info_span!("build_country_lookup").entered();
+                let lookup = country_lookup::CountryLookup::from_file(p)
+                    .map_err(|e| Error::CountryLookup(Box::new(e)))?;
+                Some(lookup)
+            }
+            None => None,
+        };
+
+        // ── 3b: edge_nodes.bin (parallel) ────────────────────────────
+        {
+            let _span = tracing::info_span!("build_edge_nodes").entered();
+
+            let ways_ref = ways.get_all().map_err(Error::WriteError)?;
+            let ways_slice: &[Way] = &ways_ref;
+
+            let mut edge_nodes =
+                TableFile::<EdgeNode>::open_override(self.target_dir.join("edge_nodes.bin"))
+                    .map_err(Error::WriteError)?;
+            let edge_nodes_appender = edge_nodes
+                .appender()
+                .map_err(Error::WriteError)?
+                .spawn_with_index()
+                .map_err(Error::WriteError)?;
+
+            ways_slice
+                .par_iter()
+                .enumerate()
+                .try_for_each(|(way_idx, way)| -> Result<()> {
+                    let flags = way.flags;
+                    let refs_start = way.node_refs_idx as usize;
+                    let refs_len = way.node_refs_count as usize;
+
+                    let (fwd_way_idx, bwd_way_idx): (Option<usize>, Option<usize>) =
+                        if flags.contains(WayFlags::HAS_PAIR) {
+                            if flags.contains(WayFlags::DIRECTION_BACKWARD) {
+                                (None, Some(way_idx))
+                            } else {
+                                (Some(way_idx), Some(way_idx + 1))
+                            }
+                        } else if way.is_forward() && way.is_backward() {
+                            (Some(way_idx), Some(way_idx))
+                        } else if way.is_forward() {
+                            (Some(way_idx), None)
+                        } else {
+                            (None, Some(way_idx))
+                        };
+
+                    let node_refs = &way_nodes_slice[refs_start..refs_start + refs_len];
+                    let mut out = Vec::new();
+                    let mut seg_start = 0usize;
+
+                    for i in 1..refs_len {
+                        let node_flags = nodes_slice[node_refs[i].0 as usize].node_flags();
+                        if i != refs_len - 1 && node_flags.is_empty() {
+                            continue;
+                        }
+
+                        let seg_len = (i - seg_start + 1) as i16;
+                        let seg_geom_from = refs_start as u64 + seg_start as u64;
+
+                        let mut dist_m: u32 = 0;
+                        let mut prev = nodes_slice[node_refs[seg_start].0 as usize].pos;
+                        for j in seg_start + 1..=i {
+                            let pos = nodes_slice[node_refs[j].0 as usize].pos;
+                            dist_m = dist_m.saturating_add(haversine_m(
+                                prev.lat, prev.lon, pos.lat, pos.lon,
+                            ) as u32);
+                            prev = pos;
+                        }
+
+                        let from_pos = nodes_slice[node_refs[seg_start].0 as usize].pos;
+                        let to_pos = nodes_slice[node_refs[i].0 as usize].pos;
+
+                        let fwd_country = country_lookup
+                            .as_ref()
+                            .map(|cl| cl.lookup(from_pos.lat, from_pos.lon))
+                            .unwrap_or(router_types::country::CountryId::UNKNOWN);
+                        let bwd_country = country_lookup
+                            .as_ref()
+                            .map(|cl| cl.lookup(to_pos.lat, to_pos.lon))
+                            .unwrap_or(router_types::country::CountryId::UNKNOWN);
+
+                        if let Some(fw) = fwd_way_idx {
+                            out.push(EdgeNode::new(
+                                fw as u64,
+                                dist_m,
+                                fwd_country,
+                                seg_geom_from,
+                                seg_len,
+                            ));
+                        }
+                        if let Some(bw) = bwd_way_idx {
+                            out.push(EdgeNode::new(
+                                bw as u64,
+                                dist_m,
+                                bwd_country,
+                                seg_geom_from,
+                                -seg_len,
+                            ));
+                        }
+
+                        seg_start = i;
+                    }
+
+                    if !out.is_empty() {
+                        edge_nodes_appender.append(out);
+                    }
+                    Ok(())
+                })?;
+
+            edge_nodes_appender
+                .join()
+                .expect("edge-node writer panicked");
+            edge_nodes.flush().map_err(Error::WriteError)?;
+            tracing::info!(edge_nodes = edge_nodes.len(), "edge_nodes.bin written");
+        }
+        drop(country_lookup); // country lookup not needed beyond this point
+
+        // TODO: Phase 4 — Morton-sort EdgeNodes + build edge spatial index
+        // TODO: Phase 5 — build TurnEdges
+
         Ok(ImportResult {
             storage_dir: self.target_dir,
             restrictions,
