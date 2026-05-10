@@ -168,12 +168,8 @@ impl<C: CostModel> Graph for RoadGraph<'_, C> {
         Self: 'a;
 
     fn outbound(&self, node_idx: usize) -> Self::Iter<'_> {
-        let first_ptr = self
-            .nodes
-            .get(node_idx)
-            .ok()
-            .map(|n| n.first_edge_idx_outbound())
-            .unwrap_or(usize::MAX);
+        // TODO: reimplement against EdgeNode / TurnEdge once Phase 5 is done.
+        let first_ptr = usize::MAX;
         EdgeIter {
             graph: self,
             current_ptr: first_ptr,
@@ -182,12 +178,9 @@ impl<C: CostModel> Graph for RoadGraph<'_, C> {
     }
 
     fn inbound(&self, node_idx: usize) -> Self::Iter<'_> {
-        let first_ptr = self
-            .nodes
-            .get(node_idx)
-            .ok()
-            .map(|n| n.first_edge_idx_inbound())
-            .unwrap_or(usize::MAX);
+        // TODO: reimplement against EdgeNode / TurnEdge once Phase 5 is done.
+        let _ = node_idx;
+        let first_ptr = usize::MAX;
         EdgeIter {
             graph: self,
             current_ptr: first_ptr,

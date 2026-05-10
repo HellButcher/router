@@ -7,6 +7,9 @@ use crate::{data::Versioned, pod::TablePod, tablefile::TableData};
 
 use super::{SimpleHeader, node::NO_EDGE};
 
+// TODO: refactor to AccessFlags, VehicleFlags or similar. Use for Edged and Restructions (Turns).
+// Clearly define which Vehicles are allowed and which not.
+// Add helpers for no_* and only_*. constants for ALL and NONE.
 bitflags! {
     /// Per-direction vehicle-access restrictions for a single edge.
     #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]

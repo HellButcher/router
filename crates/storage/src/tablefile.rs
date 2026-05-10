@@ -812,6 +812,23 @@ impl<D: TableData> WithIndexAppenderJob<D> {
         i
     }
 
+    /// Total number of entries appended (or reserved) so far.
+    pub fn len(&self) -> usize {
+        self.next.load(Ordering::Acquire)
+    }
+
+    /// Reserve `n` contiguous indices without sending data yet.
+    /// Call [`append_reserved`] with the returned base index to send the data.
+    pub fn reserve(&self, n: usize) -> usize {
+        self.next.fetch_add(n, Ordering::AcqRel)
+    }
+
+    /// Send a batch whose index range was pre-allocated via [`reserve`].
+    pub fn append_reserved(&self, base: usize, data: Vec<D>) {
+        let end = base + data.len();
+        self.sender.send((base, end, data)).unwrap();
+    }
+
     pub fn join(self) -> Result<Appender<D>> {
         let WithIndexAppenderJob { join, sender, .. } = self;
         drop(sender);

@@ -8,6 +8,56 @@ use super::SimpleHeader;
 
 pub const NO_TURN: u64 = u64::MAX;
 
+/// Temporary per-EdgeNode chain record used only during import (Phase 4b / Phase 5).
+///
+/// Holds the "next" pointers for the two per-node EdgeNode linked lists that
+/// are built in Phase 4b and consumed in Phase 5 to enumerate all
+/// (incoming × outgoing) EdgeNode pairs at each intersection.
+/// The file is deleted after TurnEdge construction.
+#[repr(C)]
+#[derive(Debug)]
+pub struct EdgeNodeChain {
+    /// Next EdgeNode in the from-node's outgoing list.
+    pub(crate) next_outgoing: AtomicU64,
+    /// Next EdgeNode in the to-node's incoming list.
+    pub(crate) next_incoming: AtomicU64,
+}
+
+const _: () = assert!(std::mem::size_of::<EdgeNodeChain>() == 16);
+
+impl EdgeNodeChain {
+    pub const NONE: u64 = NO_TURN;
+
+    pub fn next_outgoing(&self) -> usize {
+        self.next_outgoing
+            .load(std::sync::atomic::Ordering::Relaxed) as usize
+    }
+
+    pub fn next_incoming(&self) -> usize {
+        self.next_incoming
+            .load(std::sync::atomic::Ordering::Relaxed) as usize
+    }
+}
+
+impl Default for EdgeNodeChain {
+    fn default() -> Self {
+        Self {
+            next_outgoing: AtomicU64::new(NO_TURN),
+            next_incoming: AtomicU64::new(NO_TURN),
+        }
+    }
+}
+
+unsafe impl crate::pod::TablePod for EdgeNodeChain {}
+
+impl crate::tablefile::TableData for EdgeNodeChain {
+    type Header = SimpleHeader<EdgeNodeChain>;
+}
+
+impl crate::data::Versioned for EdgeNodeChain {
+    const VERSION: u32 = 1;
+}
+
 /// A directed compressed road segment — the routing node in the edge-based graph.
 ///
 /// One `EdgeNode` is emitted per directed segment between two intersection nodes.

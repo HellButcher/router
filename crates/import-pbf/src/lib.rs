@@ -9,11 +9,13 @@ use rayon::iter::{
 };
 use router_storage::{
     data::{
-        attrib::{NodeFlags, WayFlags},
+        self as storage_data,
+        attrib::{NodeFlags, TurnFlags, WayFlags},
         edge::EdgeFlags,
-        edge_node::EdgeNode,
+        edge_node::{EdgeNode, EdgeNodeChain},
         node::{Node, NodeId},
         pod64::Pod64,
+        turn_edge::TurnEdge,
         way::{Way, WayId},
     },
     idindex::IdEntry,
@@ -531,6 +533,7 @@ impl<R: io::BufRead + Send> Importer<R> {
                                     via_node_id: via,
                                     to_way_id: to,
                                     only,
+                                    // TODO: parse vehicle types
                                     vehicle_mask: EdgeFlags::empty(),
                                 });
                             }
@@ -588,11 +591,10 @@ impl<R: io::BufRead + Send> Importer<R> {
         {
             let _span = tracing::info_span!("morton_sort_ways").entered();
             let reordered_path = self.target_dir.join("ways_reordered.bin");
-            let count;
             {
                 let ways_ref = ways.get_all().map_err(Error::WriteError)?;
                 let ways_slice: &[Way] = &ways_ref;
-                count = ways_slice.len();
+                let count = ways_slice.len();
                 let way_nodes_ref = way_nodes.get_all().map_err(Error::WriteError)?;
                 let way_nodes_slice: &[Pod64] = &way_nodes_ref;
                 let scratch = self.target_dir.join("ways.sort.tmp");
@@ -624,23 +626,23 @@ impl<R: io::BufRead + Send> Importer<R> {
             drop(ways);
             std::fs::rename(&reordered_path, &ways_path).map_err(Error::WriteError)?;
 
-            tracing::info!(count, "ways Morton-sorted");
+            tracing::info!("ways Morton-sorted");
         }
         // re-open ways (now in Morton order) for subsequent phases
         let mut ways = TableFile::<Way>::open(&ways_path).map_err(Error::WriteError)?;
 
         // ── Phase 3: geometry.bin + edge_nodes.bin ────────────────────────
         // ── 3a: reorder way_nodes + write geometry + update way.node_refs_idx ──
+        let geometry_path = self.target_dir.join("geometry.bin");
+        let mut geometry;
         {
             let _span = tracing::info_span!("reorder_way_nodes_and_geometry").entered();
             let way_nodes_reordered_path = self.target_dir.join("way_nodes_reordered.bin");
-            let geometry_path = self.target_dir.join("geometry.bin");
-
             {
                 let mut new_way_nodes =
                     TableFile::<Pod64>::open_override(&way_nodes_reordered_path)
                         .map_err(Error::WriteError)?;
-                let mut geometry = TableFile::<LatLon>::open_override(&geometry_path)
+                geometry = TableFile::<LatLon>::open_override(&geometry_path)
                     .map_err(Error::WriteError)?;
 
                 let mut new_way_nodes_appender =
@@ -699,6 +701,10 @@ impl<R: io::BufRead + Send> Importer<R> {
         let way_nodes = TableFile::<Pod64>::open(&way_nodes_path).map_err(Error::WriteError)?;
         let way_nodes_ref = way_nodes.get_all().map_err(Error::WriteError)?;
         let way_nodes_slice: &[Pod64] = &way_nodes_ref;
+        let geometry_ref = geometry.get_all().map_err(Error::WriteError)?;
+        let geometry_slice: &[LatLon] = &geometry_ref;
+        let ways_ref = ways.get_all().map_err(Error::WriteError)?;
+        let ways_slice: &[Way] = &ways_ref;
 
         let country_lookup = match &self.country_boundaries {
             Some(p) => {
@@ -711,15 +717,13 @@ impl<R: io::BufRead + Send> Importer<R> {
         };
 
         // ── 3b: edge_nodes.bin (parallel) ────────────────────────────
+        let edge_nodes_path = self.target_dir.join("edge_nodes.bin");
+        let mut edge_nodes;
         {
             let _span = tracing::info_span!("build_edge_nodes").entered();
 
-            let ways_ref = ways.get_all().map_err(Error::WriteError)?;
-            let ways_slice: &[Way] = &ways_ref;
-
-            let mut edge_nodes =
-                TableFile::<EdgeNode>::open_override(self.target_dir.join("edge_nodes.bin"))
-                    .map_err(Error::WriteError)?;
+            edge_nodes = TableFile::<EdgeNode>::open_override(&edge_nodes_path)
+                .map_err(Error::WriteError)?;
             let edge_nodes_appender = edge_nodes
                 .appender()
                 .map_err(Error::WriteError)?
@@ -820,12 +824,235 @@ impl<R: io::BufRead + Send> Importer<R> {
         }
         drop(country_lookup); // country lookup not needed beyond this point
 
-        // TODO: Phase 4 — Morton-sort EdgeNodes + build edge spatial index
-        // TODO: Phase 5 — build TurnEdges
+        // ── Phase 4: Morton-sort EdgeNodes ────────────────────────────────────
+        {
+            let _span = tracing::info_span!("sort_edge_nodes").entered();
+            let reordered_path = self.target_dir.join("edge_nodes_reordered.bin");
+            let count;
+            {
+                let edge_nodes_ref = edge_nodes.get_all().map_err(Error::WriteError)?;
+                let edge_nodes_slice: &[EdgeNode] = &edge_nodes_ref;
+                count = edge_nodes_slice.len();
+                let scratch = self.target_dir.join("edge_nodes.sort.tmp");
+                TableFile::<EdgeNode>::create_with_capacity(&reordered_path, count, |entries| {
+                    let mut new_idx: usize = 0;
+                    sort_by_morton(
+                        count,
+                        DEFAULT_CHUNK_SIZE,
+                        |i| {
+                            let pos =
+                                geometry_slice[edge_nodes_slice[i].geometry_from_idx as usize];
+                            (pos.lat, pos.lon)
+                        },
+                        &scratch,
+                        |old_idx| {
+                            entries[new_idx] =
+                                unsafe { std::ptr::read(&edge_nodes_slice[old_idx as usize]) };
+                            new_idx += 1;
+                            Ok(())
+                        },
+                    )
+                })
+                .map_err(Error::WriteError)?;
+            }
+            drop(edge_nodes);
+            std::fs::rename(&reordered_path, &edge_nodes_path).map_err(Error::WriteError)?;
+            tracing::info!(count, "edge_nodes Morton-sorted");
+        }
+        // re-open edge_nodes (now in Morton order) for subsequent phases
+        let edge_nodes =
+            TableFile::<EdgeNode>::open(&edge_nodes_path).map_err(Error::WriteError)?;
+        let edge_nodes_ref = edge_nodes.get_all().map_err(Error::WriteError)?;
+        let edge_nodes_slice: &[EdgeNode] = &edge_nodes_ref;
+
+        // ── Phase 4b: link sorted EdgeNodes into per-node lists ───────────────
+        // Builds `edge_node_chains.bin`: one EdgeNodeChain per EdgeNode holding
+        // the "next" chain pointers for the two per-node linked lists.
+        // The Node's first_outgoing/incoming_edge_node_idx heads are set here.
+        let chains_path = self.target_dir.join("edge_node_chains.bin");
+        let chains;
+        {
+            let _span = tracing::info_span!("link_edge_nodes_to_nodes").entered();
+            let count = edge_nodes_slice.len();
+
+            // Use a separate file handle for nodes so the outer nodes_ref read
+            // lock is not in conflict (both are MAP_SHARED, writes are visible).
+            chains =
+                TableFile::<EdgeNodeChain>::create_with_capacity(&chains_path, count, |entries| {
+                    entries
+                        .par_iter_mut()
+                        .enumerate()
+                        .for_each(|(en_idx, chain)| {
+                            *chain = EdgeNodeChain::default();
+                            let en = &edge_nodes_slice[en_idx];
+                            storage_data::link_edge_node_to_nodes(
+                                &nodes_slice[way_nodes_slice[en.geometry_from_idx()].0 as usize],
+                                &nodes_slice[way_nodes_slice[en.geometry_to_idx()].0 as usize],
+                                en_idx as u64,
+                                chain,
+                            );
+                        });
+                    Ok(())
+                })
+                .map_err(Error::WriteError)?;
+            nodes.flush().map_err(Error::WriteError)?;
+            chains.flush().map_err(Error::WriteError)?;
+            tracing::info!(count, "edge_nodes linked into node lists");
+        }
+
+        // ── Phase 5: build TurnEdges ──────────────────────────────────────────
+        // Iterate EdgeNodes in parallel (already Morton-sorted).
+        // For each outgoing EdgeNode `y`, collect all incoming EdgeNodes `x` at
+        // `y`'s from-node and emit one TurnEdge per (x, y) pair.
+        // TurnEdges are written in EdgeNode (Morton) order via spawn_with_index.
+        let turn_edges_path = self.target_dir.join("turn_edges.bin");
+        let mut turn_edges;
+        {
+            let _span = tracing::info_span!("build_turn_edges").entered();
+            let chains_ref = chains.get_all().map_err(Error::WriteError)?;
+            let chains_slice: &[EdgeNodeChain] = &chains_ref;
+
+            let restriction_by_via: HashMap<i64, Vec<usize>> = {
+                let mut m: HashMap<i64, Vec<usize>> = HashMap::new();
+                for (i, r) in restrictions.iter().enumerate() {
+                    m.entry(r.via_node_id).or_default().push(i);
+                }
+                m
+            };
+
+            turn_edges = TableFile::<TurnEdge>::open_override(&turn_edges_path)
+                .map_err(Error::WriteError)?;
+            let job = turn_edges
+                .appender()
+                .map_err(Error::WriteError)?
+                .spawn_with_index()
+                .map_err(Error::WriteError)?;
+
+            edge_nodes_slice.par_iter().enumerate().for_each(|(yi, y)| {
+                // from-node of y = via-node for all (x → y) turns
+                let via_node = &nodes_slice[way_nodes_slice[y.geometry_from_idx()].0 as usize];
+                let turn_flags = node_flags_to_turn_flags(via_node.node_flags());
+                let applicable = restriction_by_via.get(&via_node.id.0);
+
+                // Collect all EdgeNodes incoming to the via-node.
+                let mut batch: Vec<TurnEdge> = Vec::new();
+                let mut xi = via_node.first_incoming_edge_node_idx();
+                while xi != usize::MAX {
+                    if xi != yi {
+                        let x = &edge_nodes_slice[xi];
+                        let mask = restriction_mask(&restrictions, applicable, x, y, ways_slice);
+                        let angle = turn_angle(x, y, geometry_slice);
+                        batch.push(TurnEdge::new(xi as u64, yi as u64, angle, mask, turn_flags));
+                    }
+                    xi = chains_slice[xi].next_incoming();
+                }
+
+                if batch.is_empty() {
+                    return;
+                }
+
+                // Reserve a contiguous index range, link (updating te.next_*),
+                // then send the batch with correct next pointers to the writer.
+                let base_idx = job.reserve(batch.len());
+                for (offset, te) in batch.iter().enumerate() {
+                    storage_data::link_turn_edge(
+                        &edge_nodes_slice[te.from_edge_node_idx()],
+                        y,
+                        (base_idx + offset) as u64,
+                        te,
+                    );
+                }
+                job.append_reserved(base_idx, batch);
+            });
+
+            let turn_count = job.len();
+            job.join().map_err(Error::WriteError)?;
+            turn_edges.flush().map_err(Error::WriteError)?;
+            edge_nodes.flush().map_err(Error::WriteError)?;
+            tracing::info!(turn_edges = turn_count, "turn_edges.bin written");
+        }
+
+        std::fs::remove_file(&chains_path).map_err(Error::WriteError)?;
 
         Ok(ImportResult {
             storage_dir: self.target_dir,
             restrictions,
         })
     }
+}
+
+// ── Import helpers ────────────────────────────────────────────────────────────
+
+fn node_flags_to_turn_flags(flags: NodeFlags) -> TurnFlags {
+    let mut tf = TurnFlags::empty();
+    if flags.contains(NodeFlags::TRAFFIC_SIGNALS) {
+        tf |= TurnFlags::TRAFFIC_SIGNALS;
+    }
+    if flags.contains(NodeFlags::TOLL) {
+        tf |= TurnFlags::TOLL;
+    }
+    tf
+}
+
+fn restriction_mask(
+    restrictions: &[RawRestriction],
+    applicable: Option<&Vec<usize>>,
+    x: &EdgeNode,
+    y: &EdgeNode,
+    ways: &[Way],
+) -> EdgeFlags {
+    const ALL: EdgeFlags = EdgeFlags::NO_MOTOR
+        .union(EdgeFlags::NO_HGV)
+        .union(EdgeFlags::NO_BICYCLE)
+        .union(EdgeFlags::NO_FOOT);
+    let Some(indices) = applicable else {
+        return EdgeFlags::empty();
+    };
+    let x_way_id = ways[x.way_idx as usize].id.0;
+    let y_way_id = ways[y.way_idx as usize].id.0;
+    let mut mask = EdgeFlags::empty();
+    for &ri in indices {
+        let r = &restrictions[ri];
+        let effective = if r.vehicle_mask.is_empty() {
+            ALL
+        } else {
+            r.vehicle_mask
+        };
+        if r.only {
+            if r.from_way_id == x_way_id && r.to_way_id != y_way_id {
+                mask |= effective;
+            }
+        } else if r.from_way_id == x_way_id && r.to_way_id == y_way_id {
+            mask |= effective;
+        }
+    }
+    mask
+}
+
+fn bearing(from: LatLon, to: LatLon) -> f32 {
+    let lat1 = from.lat.to_radians();
+    let lat2 = to.lat.to_radians();
+    let dlon = (to.lon - from.lon).to_radians();
+    let y = dlon.sin() * lat2.cos();
+    let x = lat1.cos() * lat2.sin() - lat1.sin() * lat2.cos() * dlon.cos();
+    y.atan2(x).to_degrees()
+}
+
+fn turn_angle(x: &EdgeNode, y: &EdgeNode, geom: &[LatLon]) -> i16 {
+    let xg = x.geometry_from_idx as usize;
+    let xc = x.geometry_count() as usize;
+    let (xa, xb) = if x.geometry_len > 0 {
+        (geom[xg + xc - 2], geom[xg + xc - 1])
+    } else {
+        (geom[xg + 1], geom[xg])
+    };
+    let yg = y.geometry_from_idx as usize;
+    let yc = y.geometry_count() as usize;
+    let (ya, yb) = if y.geometry_len > 0 {
+        (geom[yg], geom[yg + 1])
+    } else {
+        (geom[yg + yc - 1], geom[yg + yc - 2])
+    };
+    let diff = bearing(ya, yb) - bearing(xa, xb);
+    ((diff + 540.0) % 360.0 - 180.0) as i16
 }

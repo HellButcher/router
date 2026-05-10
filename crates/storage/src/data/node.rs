@@ -21,13 +21,17 @@ pub struct NodeId(pub i64);
 pub struct Node {
     pub id: NodeId,
     pub pos: LatLon,
-    pub(crate) first_edge_idx_outbound: AtomicU64,
-    pub(crate) first_edge_idx_inbound: AtomicU64,
+    /// Head of the linked list of EdgeNodes that start at this node (outgoing).
+    pub(crate) first_outgoing_edge_node_idx: AtomicU64,
+    /// Head of the linked list of EdgeNodes that end at this node (incoming).
+    pub(crate) first_incoming_edge_node_idx: AtomicU64,
     /// Access restrictions and routing hints derived from OSM node tags.
     pub flags: AtomicU8,
     _pad: [u8; 3],
     pub num_refs: AtomicU32,
 }
+
+const _: () = assert!(std::mem::size_of::<Node>() == 40);
 
 impl Default for Node {
     fn default() -> Self {
@@ -41,8 +45,8 @@ impl Node {
         Self {
             id,
             pos,
-            first_edge_idx_outbound: AtomicU64::new(NO_EDGE),
-            first_edge_idx_inbound: AtomicU64::new(NO_EDGE),
+            first_outgoing_edge_node_idx: AtomicU64::new(NO_EDGE),
+            first_incoming_edge_node_idx: AtomicU64::new(NO_EDGE),
             flags: AtomicU8::new(0),
             _pad: [0; 3],
             num_refs: AtomicU32::new(0),
@@ -54,26 +58,24 @@ impl Node {
         NodeFlags::from_bits_truncate(self.flags.load(std::sync::atomic::Ordering::Relaxed))
     }
 
-    /// Returns the linked-list pointer to the first outbound way, or [`NO_WAY`].
     #[inline]
-    pub fn first_edge_idx_outbound(&self) -> usize {
-        self.first_edge_idx_outbound
+    pub fn first_outgoing_edge_node_idx(&self) -> usize {
+        self.first_outgoing_edge_node_idx
             .load(std::sync::atomic::Ordering::Relaxed) as usize
     }
 
-    /// Returns the linked-list pointer to the first inbound way, or [`NO_WAY`].
     #[inline]
-    pub fn first_edge_idx_inbound(&self) -> usize {
-        self.first_edge_idx_inbound
+    pub fn first_incoming_edge_node_idx(&self) -> usize {
+        self.first_incoming_edge_node_idx
             .load(std::sync::atomic::Ordering::Relaxed) as usize
     }
 
     pub fn is_connected(&self) -> bool {
-        self.first_edge_idx_outbound
+        self.first_outgoing_edge_node_idx
             .load(std::sync::atomic::Ordering::Acquire)
             != NO_EDGE
             || self
-                .first_edge_idx_inbound
+                .first_incoming_edge_node_idx
                 .load(std::sync::atomic::Ordering::Acquire)
                 != NO_EDGE
     }
@@ -93,6 +95,5 @@ impl TableData for Node {
 }
 
 impl Versioned for Node {
-    // The version number should be incremented whenever the in-memory representation of `Way` changes in a non-compatible way, such that old data files can no longer be read correctly.
-    const VERSION: u32 = 2;
+    const VERSION: u32 = 3;
 }
