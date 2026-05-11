@@ -191,8 +191,8 @@ impl<C: CostModel> Graph for VirtualGraph<'_, C> {
     }
 
     fn heuristic(&self, from_idx: usize, to_idx: usize) -> Option<usize> {
-        let from_pos = self.get_edge_from_pos(from_idx)?;
-        let to_pos = self.get_edge_to_pos(to_idx)?;
+        let from_pos = self.get_edge_to_pos(from_idx)?;
+        let to_pos = self.get_edge_from_pos(to_idx)?;
         Some(self.inner.cost_model.heuristic(from_pos, to_pos))
     }
 }
