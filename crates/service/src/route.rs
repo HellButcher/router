@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{Error, Result},
-    graph::{SpeedMap, haversine_m},
+    graph::SpeedMap,
     snap::Snap,
-    virtual_graph::{VIRTUAL_GOAL, VIRTUAL_START, VirtualGraph},
+    virtual_graph::VirtualGraph,
 };
 
 pub use super::common::Points;
@@ -236,27 +236,11 @@ impl Service {
                 });
             };
 
-            // Resolve a path node index to a position, handling virtual sentinels.
-            let resolve_pos = |idx: usize| match idx {
-                VIRTUAL_START => start_snap.first().unwrap().pos,
-                VIRTUAL_GOAL => goal_snap.first().unwrap().pos,
-                i => graph.geometry[graph.edge_nodes[i].geometry_to_idx()],
-            };
-
-            // Build geometry and compute leg metrics.
-            let mut leg_bounds = BoundingBox::VOID;
-            let mut leg_length_m: u32 = 0;
-            let mut coords: Vec<[f32; 2]> = Vec::with_capacity(path_nodes.len());
-
-            for i in 0..path_nodes.len() {
-                let pos = resolve_pos(path_nodes[i]);
-                leg_bounds.add(pos);
-                coords.push([pos.lat, pos.lon]);
-                if i > 0 {
-                    let prev = resolve_pos(path_nodes[i - 1]);
-                    leg_length_m = leg_length_m.saturating_add(haversine_m(prev, pos) as u32);
-                }
-            }
+            let (coords, leg_bounds, leg_length_m) = graph.build_leg_geometry(
+                &path_nodes,
+                start_snap.first().unwrap(),
+                goal_snap.first().unwrap(),
+            );
 
             trip_bounds.expand(&leg_bounds);
             trip_duration_ms += cost_ms as u64;

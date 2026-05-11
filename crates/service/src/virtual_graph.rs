@@ -1,9 +1,10 @@
 use std::ops::Deref;
 
 use router_algorithm::{Graph, Neighbour};
+use router_types::bbox::BoundingBox;
 use router_types::coordinate::LatLon;
 
-use crate::graph::{CostModel, RoadGraph, TurnIter};
+use crate::graph::{CostModel, RoadGraph, TurnIter, haversine_m};
 use crate::snap::Snap;
 
 /// fixed index of the virtual start edge-node
@@ -194,6 +195,108 @@ impl<C: CostModel> Graph for VirtualGraph<'_, C> {
         let from_pos = self.get_edge_to_pos(from_idx)?;
         let to_pos = self.get_edge_from_pos(to_idx)?;
         Some(self.inner.cost_model.heuristic(from_pos, to_pos))
+    }
+}
+
+impl<C: CostModel> VirtualGraph<'_, C> {
+    /// Build the coordinate sequence, bounding box, and total length for a
+    /// route leg described by `path_nodes` (as returned by the search algorithm).
+    ///
+    /// Emits full per-EdgeNode geometry including intermediate shape points, with
+    /// partial geometry for the virtual start/goal snap edges.
+    pub fn build_leg_geometry(
+        &self,
+        path_nodes: &[usize],
+        start_snap: &Snap,
+        goal_snap: &Snap,
+    ) -> (Vec<[f32; 2]>, BoundingBox, u32) {
+        let mut coords: Vec<[f32; 2]> = Vec::new();
+        let mut bounds = BoundingBox::VOID;
+        let mut length_m: u32 = 0;
+
+        let push = |coords: &mut Vec<[f32; 2]>,
+                    bounds: &mut BoundingBox,
+                    length_m: &mut u32,
+                    pos: LatLon| {
+            if let Some(&[plat, plon]) = coords.last() {
+                *length_m = length_m.saturating_add(haversine_m(LatLon(plat, plon), pos) as u32);
+            }
+            bounds.add(pos);
+            coords.push([pos.lat, pos.lon]);
+        };
+
+        let emit_en = |coords: &mut Vec<[f32; 2]>,
+                       bounds: &mut BoundingBox,
+                       length_m: &mut u32,
+                       en_idx: usize,
+                       skip_front: usize,
+                       take_points: usize| {
+            let en = &self.inner.edge_nodes[en_idx];
+            let geom = &*self.inner.geometry;
+            let count = en.geometry_count().min(take_points);
+            if en.is_backward() {
+                let from = en.geometry_from_idx();
+                for i in skip_front..count {
+                    push(coords, bounds, length_m, geom[from - i]);
+                }
+            } else {
+                let from = en.geometry_from_idx();
+                for i in skip_front..count {
+                    push(coords, bounds, length_m, geom[from + i]);
+                }
+            }
+        };
+
+        for &node_idx in path_nodes {
+            match node_idx {
+                VIRTUAL_START => {
+                    let snap = start_snap;
+                    push(&mut coords, &mut bounds, &mut length_m, snap.pos);
+                    let en = &self.inner.edge_nodes[snap.edge_node_idx];
+                    emit_en(
+                        &mut coords,
+                        &mut bounds,
+                        &mut length_m,
+                        snap.edge_node_idx,
+                        snap.seg_idx + 1,
+                        en.geometry_count(),
+                    );
+                }
+                VIRTUAL_GOAL => {
+                    let snap = goal_snap;
+                    let en = &self.inner.edge_nodes[snap.edge_node_idx];
+                    emit_en(
+                        &mut coords,
+                        &mut bounds,
+                        &mut length_m,
+                        snap.edge_node_idx,
+                        1,
+                        snap.seg_idx + 1,
+                    );
+                    let last_geom_pt = if en.is_backward() {
+                        en.geometry_from_idx() - snap.seg_idx
+                    } else {
+                        en.geometry_from_idx() + snap.seg_idx
+                    };
+                    if !snap.pos.is_quasi_equal(self.inner.geometry[last_geom_pt]) {
+                        push(&mut coords, &mut bounds, &mut length_m, snap.pos);
+                    }
+                }
+                en_idx => {
+                    let en = &self.inner.edge_nodes[en_idx];
+                    emit_en(
+                        &mut coords,
+                        &mut bounds,
+                        &mut length_m,
+                        en_idx,
+                        1,
+                        en.geometry_count(),
+                    );
+                }
+            }
+        }
+
+        (coords, bounds, length_m)
     }
 }
 

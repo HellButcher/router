@@ -21,6 +21,8 @@ pub struct Snap {
     pub edge_node_idx: usize,
     /// Projected position on the edges geometry.
     pub pos: LatLon,
+    /// Segment index within the EdgeNode geometry (in traversal direction).
+    pub seg_idx: usize,
     /// 0.0 = geometry start, 1.0 = geometry end (forward EdgeNode direction).
     pub distance_from_start_m: usize,
     pub distance_to_end_m: usize,
@@ -133,14 +135,16 @@ impl Snapper<'_> {
                     seg_frac,
                 );
                 let total_dist_m = en.dist_m as usize;
-                let (distance_from_start_m, distance_to_end_m) = if en.is_backward() {
-                    (total_dist_m - frac_dist_m, frac_dist_m)
+                let (distance_from_start_m, distance_to_end_m, snap_seg_idx) = if en.is_backward() {
+                    let nseg = en.geometry_count() - 1;
+                    (total_dist_m - frac_dist_m, frac_dist_m, nseg - seg_idx)
                 } else {
-                    (frac_dist_m, total_dist_m - frac_dist_m)
+                    (frac_dist_m, total_dist_m - frac_dist_m, seg_idx)
                 };
                 Some(Snap {
                     edge_node_idx: en_idx,
                     pos,
+                    seg_idx: snap_seg_idx,
                     distance_from_start_m,
                     distance_to_end_m,
                     distance_m,

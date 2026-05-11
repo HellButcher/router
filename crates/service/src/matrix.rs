@@ -236,13 +236,7 @@ impl Service {
             };
             let end_snap = &to_snap[end_snap_idx];
             let path = reconstruct_path(&predecessors, start_idx, end_snap.edge_node_idx);
-            let length_m = path_length(
-                &path,
-                from_snap[0].pos,
-                &to_snap[end_snap_idx],
-                &graph.edge_nodes,
-                &graph.geometry,
-            );
+            let length_m = path_length(&path, from_snap, &to_snap[end_snap_idx], &graph.edge_nodes);
 
             entries.push((
                 pair_idx,
@@ -314,29 +308,13 @@ fn destination_cost_single<C: CostModel>(
 
 /// Sum haversine distances along the reconstructed node path, adding fractional
 /// edge segments at origin/destination when those are edge-snapped.
-fn path_length(
-    path: &[usize],
-    from_snap_pos: LatLon,
-    to_snap: &Snap,
-    edges: &[EdgeNode],
-    geometry: &[LatLon],
-) -> f32 {
-    let resolve = |idx: usize| -> Option<router_types::coordinate::LatLon> {
-        if idx == VIRTUAL_START {
-            Some(from_snap_pos)
-        } else if let Some(edge) = edges.get(idx) {
-            geometry.get(edge.geometry_to_idx()).copied()
-        } else {
-            None
-        }
-    };
-
+fn path_length(path: &[usize], _from_snap: &[Snap], to_snap: &Snap, edges: &[EdgeNode]) -> f32 {
     let mut length_m = 0f32;
-    for i in 1..path.len() {
-        if let Some(a) = resolve(path[i - 1])
-            && let Some(b) = resolve(path[i])
-        {
-            length_m += haversine_m(a, b);
+    for p in path {
+        if *p == VIRTUAL_START {
+            // TODO: need to get distance_to_end from the matching snap
+        } else if let Some(edge) = edges.get(*p) {
+            length_m += edge.dist_m as f32;
         }
     }
 
