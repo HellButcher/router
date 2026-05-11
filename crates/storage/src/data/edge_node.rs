@@ -89,7 +89,9 @@ pub struct EdgeNode {
 const _: () = assert!(std::mem::size_of::<EdgeNode>() == 40);
 
 impl EdgeNode {
-    /// `geometry_len`: positive = forward traversal, negative = backward. |geometry_len| ≥ 2.
+    /// `geometry_from_idx`: from-node index (= last stored node for backward edges).
+    /// `geometry_len`: signed delta to to-node (`to = from + len`); positive = forward,
+    ///   negative = backward; |geometry_len| ≥ 1.
     pub fn new(
         way_idx: u64,
         dist_m: u32,
@@ -98,8 +100,8 @@ impl EdgeNode {
         geometry_len: i16,
     ) -> Self {
         debug_assert!(
-            geometry_len.abs() >= 2,
-            "geometry_len magnitude must be ≥ 2"
+            geometry_len.abs() >= 1,
+            "geometry_len magnitude must be ≥ 1"
         );
         Self {
             way_idx,
@@ -118,12 +120,14 @@ impl EdgeNode {
         self.way_idx as usize
     }
 
+    /// From-node index in `geometry.bin`. For backward edges this is the last stored node.
     #[inline]
     pub fn geometry_from_idx(&self) -> usize {
         self.geometry_from_idx as usize
     }
 
-    /// Exclusive end index into `geometry.bin` (`geometry_from_idx + |geometry_len|`).
+    /// To-node index in `geometry.bin` (`geometry_from_idx + geometry_len`).
+    /// For backward edges `geometry_to_idx() < geometry_from_idx()`.
     #[inline]
     pub fn geometry_to_idx(&self) -> usize {
         (self.geometry_from_idx as isize + self.geometry_len as isize) as usize
@@ -132,16 +136,16 @@ impl EdgeNode {
     /// Number of geometry points in the slice (always ≥ 2).
     #[inline]
     pub fn geometry_count(&self) -> usize {
-        self.geometry_len.unsigned_abs() as usize
+        self.geometry_len.unsigned_abs() as usize + 1
     }
 
-    // Range of geometry point indices in `geometry.bin` for this EdgeNode's segment, in storage order.
+    /// Storage range of geometry point indices (always ascending, direction-independent).
     #[inline]
-    pub fn geometry_range(&self) -> std::ops::Range<usize> {
+    pub fn geometry_range(&self) -> std::ops::RangeInclusive<usize> {
         if self.is_backward() {
-            self.geometry_to_idx()..self.geometry_from_idx()
+            self.geometry_to_idx()..=self.geometry_from_idx()
         } else {
-            self.geometry_from_idx()..self.geometry_to_idx()
+            self.geometry_from_idx()..=self.geometry_to_idx()
         }
     }
 

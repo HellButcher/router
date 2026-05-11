@@ -289,11 +289,13 @@ impl<R: io::BufRead + Send> Importer<R> {
             // node_ids_per_way[i] = raw OSM node IDs for way i (in ways.bin order, first entry).
             // Owned i64 values, no blob borrows.
             let raw_restrictions: Mutex<Vec<RawRestriction>> = Mutex::new(Vec::new());
+            let nodes_committed = nodes_append.committed_arc();
             blobs
                 .into_iter()
                 .map(|b| (nodes_append.start(), ways_append.start(), b))
                 .par_bridge()
                 .try_for_each(|(nodes_appender, ways_appender, blob)| -> Result<()> {
+                    let blob_index = nodes_appender.index();
                     let data = blob?.into_decoded()?;
 
                     // ── Phase 1a: nodes ───────────────────────────────────
@@ -375,7 +377,18 @@ impl<R: io::BufRead + Send> Importer<R> {
                             let last_ref = node_refs_len - 1;
                             for (i, node_ref) in w.refs().enumerate() {
                                 let Some((node_index, node)) =
-                                    nodes.find(node_ref as u64).ok().flatten()
+                                    nodes.find(node_ref as u64).ok().flatten().or_else(|| {
+                                        // Wait for all preceding blobs (all node blobs) to be written
+                                        // before looking up nodes, to avoid a race with par_bridge.
+                                        {
+                                            let (lock, cvar) = &*nodes_committed;
+                                            drop(cvar.wait_while(lock.lock().unwrap(), |c| {
+                                                *c < blob_index
+                                            }));
+                                        }
+                                        // then retry once
+                                        nodes.find(node_ref as u64).ok().flatten()
+                                    })
                                 else {
                                     return Err(Error::NodeIdNotFound(NodeId(node_ref)));
                                 };
@@ -795,7 +808,7 @@ impl<R: io::BufRead + Send> Importer<R> {
                                 dist_m,
                                 fwd_country,
                                 seg_geom_from,
-                                seg_len,
+                                seg_len - 1,
                             ));
                         }
                         if let Some(bw) = bwd_way_idx {
@@ -803,8 +816,8 @@ impl<R: io::BufRead + Send> Importer<R> {
                                 bw as u64,
                                 dist_m,
                                 bwd_country,
-                                seg_geom_from,
-                                -seg_len,
+                                seg_geom_from + seg_len as u64 - 1,
+                                -(seg_len - 1),
                             ));
                         }
 
@@ -1080,19 +1093,19 @@ fn bearing(from: LatLon, to: LatLon) -> f32 {
 }
 
 fn turn_angle(x: &EdgeNode, y: &EdgeNode, geom: &[LatLon]) -> i16 {
-    let xg = x.geometry_from_idx();
-    let xc = x.geometry_count();
+    // x is incoming: use the last two traversal points (approaching to-node).
+    let xt = x.geometry_to_idx();
     let (xa, xb) = if x.geometry_len > 0 {
-        (geom[xg + xc - 2], geom[xg + xc - 1])
+        (geom[xt - 1], geom[xt])
     } else {
-        (geom[xg + 1], geom[xg])
+        (geom[xt + 1], geom[xt])
     };
-    let yg = y.geometry_from_idx();
-    let yc = y.geometry_count();
+    // y is outgoing: use the first two traversal points (departing from from-node).
+    let yf = y.geometry_from_idx();
     let (ya, yb) = if y.geometry_len > 0 {
-        (geom[yg], geom[yg + 1])
+        (geom[yf], geom[yf + 1])
     } else {
-        (geom[yg + yc - 1], geom[yg + yc - 2])
+        (geom[yf], geom[yf - 1])
     };
     let diff = bearing(ya, yb) - bearing(xa, xb);
     ((diff + 540.0) % 360.0 - 180.0) as i16

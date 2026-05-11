@@ -7,7 +7,7 @@ use std::ops::{Deref, RangeBounds};
 use std::path::Path;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard};
+use std::sync::{Arc, Condvar, Mutex, PoisonError, RwLock, RwLockReadGuard};
 use std::thread::JoinHandle;
 use std::{fs::OpenOptions, io};
 
@@ -61,12 +61,19 @@ pub struct OrderedAppenderJob<D: TableData> {
     counter: usize,
     join: JoinHandle<Result<Appender<D>>>,
     sender: AppenderJobSender<D>,
+    committed: Arc<(Mutex<usize>, Condvar)>,
 }
 
 pub struct OrderedAppenderHandle<D: TableData>(
     usize,
     crossbeam_channel::Sender<(usize, usize, Vec<D>)>,
 );
+
+impl<D: TableData> OrderedAppenderHandle<D> {
+    pub fn index(&self) -> usize {
+        self.0
+    }
+}
 
 pub struct WithIndexAppenderJob<D: TableData> {
     next: AtomicUsize,
@@ -740,11 +747,12 @@ impl<D: TableData + Send + 'static> Appender<D> {
     /// The `AppenderJobHandle` can be sent to a different thread, and when the producer thread has finished preparing the buffer, it calls `done(buffer)` on the handle to send it to the appender thread.
     /// The appender thread will receive these buffers, and will append them to the file in the correct order, even if they are sent out of order by the producers.
     pub fn spawn_ordered(self) -> OrderedAppenderJob<D> {
-        let (sender, join) = self.spawn_appender_task();
+        let (sender, join, committed) = self.spawn_appender_task();
         OrderedAppenderJob {
             counter: 0,
             sender,
             join,
+            committed,
         }
     }
 
@@ -756,7 +764,7 @@ impl<D: TableData + Send + 'static> Appender<D> {
             return Err(io::Error::other("File not aligned"));
         }
         let initial_index = initial_data_pos / TableFile::<D>::DATA_SIZE;
-        let (sender, join) = self.spawn_appender_task();
+        let (sender, join, _committed) = self.spawn_appender_task();
         Ok(WithIndexAppenderJob {
             next: AtomicUsize::new(initial_index),
             sender,
@@ -764,8 +772,16 @@ impl<D: TableData + Send + 'static> Appender<D> {
         })
     }
 
-    fn spawn_appender_task(self) -> (AppenderJobSender<D>, JoinHandle<Result<Appender<D>>>) {
+    fn spawn_appender_task(
+        self,
+    ) -> (
+        AppenderJobSender<D>,
+        JoinHandle<Result<Appender<D>>>,
+        Arc<(Mutex<usize>, Condvar)>,
+    ) {
         let (s, r) = crossbeam_channel::unbounded();
+        let committed = Arc::new((Mutex::new(0usize), Condvar::new()));
+        let committed_clone = Arc::clone(&committed);
         let join = std::thread::spawn(move || {
             let mut appender = self;
             let mut next = 0;
@@ -796,10 +812,15 @@ impl<D: TableData + Send + 'static> Appender<D> {
                     }
                     bufs.clear();
                 }
+                {
+                    let (lock, cvar) = &*committed_clone;
+                    *lock.lock().unwrap() = next;
+                    cvar.notify_all();
+                }
             }
             Ok(appender)
         });
-        (s, join)
+        (s, join, committed)
     }
 }
 
@@ -808,6 +829,10 @@ impl<D: TableData> OrderedAppenderJob<D> {
         let i = self.counter;
         self.counter += 1;
         OrderedAppenderHandle(i, self.sender.clone())
+    }
+
+    pub fn committed_arc(&self) -> Arc<(Mutex<usize>, Condvar)> {
+        Arc::clone(&self.committed)
     }
 
     pub fn join(self) -> Result<Appender<D>> {
