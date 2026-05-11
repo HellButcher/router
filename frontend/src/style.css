@@ -612,19 +612,11 @@ body {
   background-image: url("icons/snap.svg");
 }
 
-.maplibregl-ctrl button.maplibregl-ctrl-snap.mode-node .maplibregl-ctrl-icon {
-  background-image: url("icons/snap-node.svg");
-}
-
-.maplibregl-ctrl button.maplibregl-ctrl-snap.mode-node {
-  background-color: rgba(0, 119, 204, 0.1);
-}
-
-.maplibregl-ctrl button.maplibregl-ctrl-snap.mode-edge .maplibregl-ctrl-icon {
+.maplibregl-ctrl button.maplibregl-ctrl-snap.active .maplibregl-ctrl-icon {
   background-image: url("icons/snap-edge.svg");
 }
 
-.maplibregl-ctrl button.maplibregl-ctrl-snap.mode-edge {
+.maplibregl-ctrl button.maplibregl-ctrl-snap.active {
   background-color: rgba(0, 180, 100, 0.12);
 }
 

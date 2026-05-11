@@ -8,10 +8,10 @@ import {
 } from "maplibre-gl";
 import { client } from "../api/client.js";
 import type { components } from "../api/types.js";
+import { decodePolyline } from "../api/polyline.js";
 import { LL } from "../i18n/index.js";
 
-type Location = components["schemas"]["Location"];
-type NodeMeta = components["schemas"]["NodeMeta"];
+type LocateResponseLocation = components["schemas"]["LocateResponseLocation"];
 type EdgeMeta = components["schemas"]["EdgeMeta"];
 type WayMeta = components["schemas"]["WayMeta"];
 
@@ -20,27 +20,22 @@ type WayMeta = components["schemas"]["WayMeta"];
 export const LOCATE_INFO_EVENT = "locate-info";
 
 export interface LocateInfo {
-  location: Location;
-  /** Snapped node (node mode). */
-  node?: NodeMeta;
-  /** Ordered nodes: two endpoints for Light, all way nodes for FullWay. */
-  nodes?: NodeMeta[];
+  location: LocateResponseLocation;
+  /** Way geometry points as [lon, lat] pairs (MapLibre order). */
+  points?: [number, number][];
   way?: WayMeta;
   edge?: EdgeMeta;
 }
 
 // ── modes ─────────────────────────────────────────────────────────────────────
 
-type Mode = "off" | "node" | "edge";
+type Mode = "off" | "on";
 
 const MODE_TITLES: Record<Mode, string> = {
   get off() {
     return LL().locate.control.off();
   },
-  get node() {
-    return LL().locate.control.node();
-  },
-  get edge() {
+  get on() {
     return LL().locate.control.edge();
   },
 };
@@ -181,20 +176,20 @@ export class SnapControl implements IControl {
       | undefined;
     if (!src) return;
 
-    if (!info?.nodes?.length) {
+    if (!info?.points?.length) {
       src.setData({ type: "FeatureCollection", features: [] });
       return;
     }
 
-    const { nodes, edge } = info;
+    const { points, edge } = info;
     const features: GeoJSON.Feature[] = [];
 
-    if (nodes.length >= 2) {
+    if (points.length >= 2) {
       features.push({
         type: "Feature",
         geometry: {
           type: "LineString",
-          coordinates: nodes.map((n) => [n.lon, n.lat]),
+          coordinates: points,
         },
         properties: { kind: "way" },
       });
@@ -202,17 +197,15 @@ export class SnapControl implements IControl {
 
     const fi = edge?.from_node_idx ?? 0;
     const ti = edge?.to_node_idx ?? 1;
-    const from = nodes[fi];
-    const to = nodes[ti];
-    if (from && to) {
+    const lo = Math.min(fi, ti);
+    const hi = Math.max(fi, ti);
+    const segment = points.slice(lo, hi + 1);
+    if (segment.length >= 2) {
       features.push({
         type: "Feature",
         geometry: {
           type: "LineString",
-          coordinates: [
-            [from.lon, from.lat],
-            [to.lon, to.lat],
-          ],
+          coordinates: segment,
         },
         properties: { kind: "edge" },
       });
@@ -224,8 +217,7 @@ export class SnapControl implements IControl {
   // ── mode cycling ────────────────────────────────────────────────────────────
 
   private _cycleMode() {
-    const next: Record<Mode, Mode> = { off: "node", node: "edge", edge: "off" };
-    this._setMode(next[this._mode]);
+    this._setMode(this._mode === "off" ? "on" : "off");
   }
 
   /** Deactivate the locate control (set mode to off). */
@@ -248,8 +240,6 @@ export class SnapControl implements IControl {
     const btn = this._button;
     if (!btn) return;
     btn.classList.toggle("active", this._mode !== "off");
-    btn.classList.toggle("mode-node", this._mode === "node");
-    btn.classList.toggle("mode-edge", this._mode === "edge");
     btn.title = MODE_TITLES[this._mode];
     btn.ariaLabel = MODE_TITLES[this._mode];
   }
@@ -320,7 +310,6 @@ export class SnapControl implements IControl {
         const { data } = await client.POST("/api/v1/locate", {
           body: {
             locations: [{ lat, lon }],
-            snap_mode: this._mode === "node" ? "Node" : "Edge",
             with_meta: "FullWay",
           },
         });
@@ -350,7 +339,6 @@ export class SnapControl implements IControl {
       const { data } = await client.POST("/api/v1/locate", {
         body: {
           locations: [{ lat, lon: lng }],
-          snap_mode: this._mode === "node" ? "Node" : "Edge",
           with_meta: "Light",
         },
         signal: ac.signal,
@@ -389,12 +377,19 @@ export class SnapControl implements IControl {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function _parseLocateInfo(loc: Location): LocateInfo {
-  const nodeMeta = loc.node_meta;
+function _parseLocateInfo(loc: LocateResponseLocation): LocateInfo {
+  let points: [number, number][] | undefined;
+  if (loc.meta_points != null) {
+    const raw =
+      typeof loc.meta_points === "string"
+        ? decodePolyline(loc.meta_points)
+        : (loc.meta_points as [number, number][]);
+    // API returns [lat, lon]; MapLibre needs [lon, lat]
+    points = raw.map(([lat, lon]) => [lon, lat]);
+  }
   return {
     location: loc,
-    node: nodeMeta && !Array.isArray(nodeMeta) ? nodeMeta : undefined,
-    nodes: Array.isArray(nodeMeta) ? nodeMeta : undefined,
+    points,
     way: loc.way_meta ?? undefined,
     edge: loc.edge_meta ?? undefined,
   };

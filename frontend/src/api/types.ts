@@ -121,7 +121,7 @@ export interface components {
       /** @description ISO 3166-1 alpha-2 country code, or `null` if unknown. */
       country_id?: string | null;
       /**
-       * Format: uint16
+       * Format: uint32
        * @description Length of the representative edge segment in metres.
        */
       dist_m: number;
@@ -130,16 +130,6 @@ export interface components {
        * @description Index of the from-node of this edge within the accompanying `node_meta` array. Only present when `node_meta` is populated.
        */
       from_node_idx?: number | null;
-      /**
-       * Format: uint8
-       * @description Max speed from OSM tag in km/h; 0 means use highway-class default.
-       */
-      max_speed?: number;
-      no_bicycle?: boolean;
-      no_foot?: boolean;
-      no_hgv?: boolean;
-      /** @description Per-direction access flags (from the representative edge). */
-      no_motor?: boolean;
       /**
        * Format: uint
        * @description Index of the to-node of this edge within the accompanying `node_meta` array. Only present when `node_meta` is populated.
@@ -162,13 +152,11 @@ export interface components {
      *     Exactly one of `node_id` or `way_id` must be set.
      */
     InspectRequest: {
-      node_id?: number[] | null;
       /** Format: int64 */
-      way_id?: number | null;
+      way_id: number;
     };
     InspectResponse: {
-      edge: components["schemas"]["EdgeMeta"][];
-      node: components["schemas"]["NodeMeta"][];
+      points: components["schemas"]["Points"];
       way?: components["schemas"]["WayMeta"];
     };
     IsochroneRange: {
@@ -218,7 +206,7 @@ export interface components {
       /** Format: uint32 */
       length: number;
       maneuvers?: components["schemas"]["Maneuver"][];
-      path: components["schemas"]["Points"];
+      path?: components["schemas"]["Points"];
     };
     /**
      * @description A request to snap a list of coordinates to the nearest routable position.
@@ -226,19 +214,9 @@ export interface components {
      *     See: [`LocateResponse`], [`Service::locate`]
      */
     LocateRequest: {
-      /**
-       * @description When `true` and `snap_mode` is [`SnapMode::Edge`], ways that are inaccessible for the selected profile are skipped during snapping. Defaults to `false`.
-       * @default false
-       */
-      filter_by_profile?: boolean;
       id?: string | null;
       locations: components["schemas"]["Locations"];
       profile?: string | null;
-      /**
-       * @description Whether to snap to the nearest node or the nearest point on a way segment. Defaults to [`SnapMode::Node`].
-       * @default Edge
-       */
-      snap_mode?: components["schemas"]["SnapMode"];
       /** @default km */
       units?: components["schemas"]["Unit"];
       /**
@@ -258,29 +236,37 @@ export interface components {
      */
     LocateResponse: {
       id?: string | null;
-      locations: components["schemas"]["Location"][];
-      profile: string;
+      locations: components["schemas"]["LocateResponseLocation"][];
+      profile?: string | null;
       /** @default km */
       units?: components["schemas"]["Unit"];
     };
     /** @description A Location is a Point giben as latitude (lat) and longitude (lon) with additional information */
-    Location: {
-      allow_u_turns?: boolean | null;
+    LocateResponseLocation: {
+      /** Format: float */
+      distance?: number | null;
       readonly edge_meta?: components["schemas"]["EdgeMeta"];
-      /**
-       * Format: float
-       * @description Fraction along the snapped way segment (0.0 = from-node, 1.0 = to-node). Only present for [`SnapMode::Edge`] snaps.
-       */
-      fraction?: number | null;
       id?: string | null;
       /** Format: float */
       lat: number;
       /** Format: float */
       lon: number;
-      readonly node_meta?: components["schemas"]["SingleOrVec_for_NodeMeta"];
-      /** Format: uint32 */
+      readonly meta_points?: components["schemas"]["Points"];
+      /** Format: float */
       radius?: number | null;
       readonly way_meta?: components["schemas"]["WayMeta"];
+    } & {
+      [key: string]: unknown;
+    };
+    /** @description A Location is a Point giben as latitude (lat) and longitude (lon) with additional information */
+    Location: {
+      id?: string | null;
+      /** Format: float */
+      lat: number;
+      /** Format: float */
+      lon: number;
+      /** Format: float */
+      radius?: number | null;
     } & {
       [key: string]: unknown;
     };
@@ -354,27 +340,13 @@ export interface components {
       duration: components["schemas"]["Duration"];
       /** Format: uint */
       from: number;
-      /** Format: uint32 */
+      /** Format: float */
       length: number;
       /** Format: uint */
       to: number;
     };
     /** @description Controls how much meta information is included in locate responses. */
-    MetaDetail: "None" | "Light" | "FullWay";
-    NodeMeta: {
-      /** Format: int64 */
-      id: number;
-      /** Format: float */
-      lat: number;
-      /** Format: float */
-      lon: number;
-      no_bicycle?: boolean;
-      no_foot?: boolean;
-      no_hgv?: boolean;
-      no_motor?: boolean;
-      toll?: boolean;
-      traffic_signals?: boolean;
-    };
+    MetaDetail: "None" | "Light" | "FullEdge" | "FullWay";
     /** @description A list of Points */
     Points: number[][] | string;
     Problem: {
@@ -403,13 +375,13 @@ export interface components {
       locations: components["schemas"]["Locations"];
       /** @default null */
       profile?: string | null;
-      /**
-       * @description Whether to snap waypoints to the nearest node or the nearest point on a way segment. Defaults to [`SnapMode::Edge`].
-       * @default Edge
-       */
-      snap_mode?: components["schemas"]["SnapMode"];
       /** @default km */
       units?: components["schemas"]["Unit"];
+      /**
+       * @description Weather to include the path geometry in the response. Defaults to `true` (i.e. include the path).
+       * @default true
+       */
+      with_path?: boolean;
     };
     RouteResponse: {
       bounds: components["schemas"]["BoundingBox"];
@@ -428,10 +400,6 @@ export interface components {
      * @enum {string}
      */
     ServiceStatus: "ok";
-    SingleOrVec_for_NodeMeta:
-      | components["schemas"]["NodeMeta"]
-      | components["schemas"]["NodeMeta"][];
-    SnapMode: "Node" | "Edge";
     /**
      * @description Units for distances
      * @enum {string}
@@ -452,6 +420,11 @@ export interface components {
        */
       max_height_cm?: number;
       /**
+       * Format: uint8
+       * @description Max speed from OSM tag in km/h; 0 means use highway-class default.
+       */
+      max_speed?: number;
+      /**
        * Format: uint16
        * @description Maximum allowed weight in kilograms; 0 = no restriction.
        */
@@ -461,6 +434,11 @@ export interface components {
        * @description Maximum width clearance in centimetres; 0 = no restriction.
        */
       max_width_cm?: number;
+      no_bicycle?: boolean;
+      no_foot?: boolean;
+      no_hgv?: boolean;
+      /** @description Per-direction access flags (from the representative edge). */
+      no_motor?: boolean;
       oneway?: boolean;
       surface_quality: string;
       /** @description Per-direction access flags (from the representative edge). */

@@ -302,7 +302,7 @@ export class RouteControl implements IControl {
       } else if (data) {
         const coords: [number, number][] = [];
         for (const leg of data.legs) {
-          coords.push(...pointsToCoords(leg.path));
+          if (leg.path) coords.push(...pointsToCoords(leg.path));
         }
         this._updateLine(coords);
         this._result = {

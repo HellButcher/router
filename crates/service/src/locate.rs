@@ -164,18 +164,18 @@ impl Snapper<'_> {
 
         let (from_node_idx, to_node_idx) = match meta_detail {
             MetaDetail::FullWay => {
-                points.reserve(way.geometry_len());
+                let way_len = way.geometry_len();
+                let ofs = way.geometry_offset_idx();
+                points.reserve(way_len);
                 if edge.is_backward() {
-                    points.extend(self.geometry[edge.geometry_range()].iter().rev().cloned());
-                    let ofs = way.geometry_offset_idx() + way.geometry_len();
-                    let from = ofs - edge.geometry_from_idx();
-                    let to = from + edge.geometry_count();
+                    points.extend(self.geometry[way.geometry_range()].iter().rev().cloned());
+                    let from = way_len - 1 - (edge.geometry_from_idx() - ofs);
+                    let to = way_len - 1 - (edge.geometry_to_idx() - ofs);
                     (Some(from), Some(to))
                 } else {
-                    points.extend_from_slice(&self.geometry[edge.geometry_range()]);
-                    let ofs = way.geometry_offset_idx();
+                    points.extend_from_slice(&self.geometry[way.geometry_range()]);
                     let from = edge.geometry_from_idx() - ofs;
-                    let to = from + edge.geometry_count();
+                    let to = edge.geometry_to_idx() - ofs;
                     (Some(from), Some(to))
                 }
             }
@@ -186,7 +186,7 @@ impl Snapper<'_> {
                 } else {
                     points.extend_from_slice(&self.geometry[edge.geometry_range()]);
                 }
-                (Some(0), Some(points.len()))
+                (Some(0), Some(points.len() - 1))
             }
             MetaDetail::Light => {
                 points.reserve_exact(2);
