@@ -974,6 +974,39 @@ impl<R: io::BufRead + Send> Importer<R> {
 
         std::fs::remove_file(&chains_path).map_err(Error::WriteError)?;
 
+        // ── Phase 6: edge spatial index ───────────────────────────────────────
+        {
+            let _span = tracing::info_span!("build_edge_spatial_index").entered();
+            let count = edge_nodes_slice.len();
+            // EdgeNodes are already Morton-sorted, so build_presorted avoids a
+            // redundant external sort.
+            router_storage::spatial::SpatialIndexBuilder::new()
+                .build_presorted(
+                    count,
+                    |i| {
+                        let en = &edge_nodes_slice[i];
+                        let range = en.geometry_range();
+                        let pts = &geometry_slice[range];
+                        let (mut min_lat, mut min_lon) = (f32::INFINITY, f32::INFINITY);
+                        let (mut max_lat, mut max_lon) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+                        for p in pts {
+                            min_lat = min_lat.min(p.lat);
+                            min_lon = min_lon.min(p.lon);
+                            max_lat = max_lat.max(p.lat);
+                            max_lon = max_lon.max(p.lon);
+                        }
+                        (min_lat, min_lon, max_lat, max_lon)
+                    },
+                    self.target_dir.join("edge_node_spatial.bin"),
+                )
+                .map_err(Error::WriteError)?;
+            tracing::info!(count, "edge_node_spatial.bin written");
+        }
+
+        // ── Cleanup: remove import-only files not needed at query time ────────
+        std::fs::remove_file(&way_nodes_path).map_err(Error::WriteError)?;
+        std::fs::remove_file(self.target_dir.join("nodes.bin")).map_err(Error::WriteError)?;
+
         Ok(ImportResult {
             storage_dir: self.target_dir,
             restrictions,

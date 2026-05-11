@@ -136,6 +136,7 @@ Returning `None` if the turn is blocked for this vehicle (via `restriction_mask`
 
 **Note on dense arrays:** After CH preprocessing freezes the graph, linked lists can be flattened to dense offset arrays `(outbound_offset, outbound_len)` per `EdgeNode` for better cache performance during queries. Linked lists are kept through CH because shortcut insertion is O(1) CAS prepend; dense arrays would require O(n) rebuilds per contraction step.
 
+
 ### No intersection node table at runtime
 
 Intersection nodes do not need to be a permanent data structure. Everything they provide can be moved elsewhere:
@@ -211,6 +212,11 @@ Phase 5:  TurnEdges                                            ✓ Done
   Set TurnFlags from NodeFlags (TRAFFIC_SIGNALS, TOLL) read from nodes.bin.
   CAS-prepend each TurnEdge into both outbound and inbound linked lists.
   Delete edge_node_chains.bin.
+
+Phase 6:  Edge spatial index + cleanup                         ✓ Done
+  Build edge_node_spatial.bin from Morton-sorted EdgeNodes using build_presorted
+  (bounding box = min/max lat/lon over all geometry points of each EdgeNode).
+  Delete import-only files: nodes.bin, way_nodes.bin.
 ```
 
 ---
@@ -275,7 +281,7 @@ Sort `edge_nodes.bin` by the from-position of each `EdgeNode`:
 
 **Phase 4b:** Link sorted `EdgeNode`s into per-intersection linked lists stored in `edge_node_chains.bin` — one `EdgeNodeChain` record (16 bytes) per `EdgeNode`, holding `next_outgoing` and `next_incoming` pointers. `Node::first_outgoing_edge_node_idx` / `first_incoming_edge_node_idx` are CAS-prepended. This temporary file is consumed by Phase 5 and then deleted.
 
-Note: the edge spatial index (bounding box per `EdgeNode`) is not yet built during import — `SpatialIndexBuilder` exists in the storage crate but is not yet wired into the pipeline.
+The edge spatial index is built in Phase 6 after TurnEdges are written.
 
 ---
 
@@ -342,10 +348,10 @@ Graph compression (Phase 2) must precede CH. CH on an uncompressed graph would b
 
 | File | Status | Description |
 |------|--------|-------------|
-| `nodes.bin` | import-time only | Kept through Phase 5 for flag/position lookups; not needed at query time |
+| `nodes.bin` | import-time only | Kept through Phase 5 for flag/position lookups; deleted in Phase 6 |
 | `node_id_index.bin` | **removed** | Node lookup dropped |
 | `node_spatial.bin` | **removed** | Node snapping dropped |
-| `way_nodes.bin` | **new (import-time)** | Flat `Pod64` array of resolved node-table indices per way; used in Phase 3, then deleted |
+| `way_nodes.bin` | **new (import-time)** | Flat `Pod64` array of resolved node-table indices per way; used through Phase 5, deleted in Phase 6 |
 | `edge_node_chains.bin` | **new (import-time)** | Per-EdgeNode linked-list chain records; built in Phase 4b, consumed + deleted in Phase 5 |
 | `edges.bin` | → `edge_nodes.bin` | One per directed compressed segment |
 | *(new)* | `turn_edges.bin` | One per legal turn at each intersection |
