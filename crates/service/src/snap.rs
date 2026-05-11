@@ -239,4 +239,3 @@ pub fn fractional_distance_on_geometry(
 }
 
 // ── Access check ──────────────────────────────────────────────────────────────
-

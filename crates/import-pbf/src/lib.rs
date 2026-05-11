@@ -10,7 +10,7 @@ use rayon::iter::{
 use router_storage::{
     data::{
         self as storage_data,
-        attrib::{NodeFlags, TurnFlags, WayFlags},
+        attrib::{HighwayClass, NodeFlags, TurnFlags, WayFlags},
         edge::EdgeFlags,
         edge_node::{EdgeNode, EdgeNodeChain},
         node::{Node, NodeId},
@@ -942,7 +942,15 @@ impl<R: io::BufRead + Send> Importer<R> {
                         let x = &edge_nodes_slice[xi];
                         let mask = restriction_mask(&restrictions, applicable, x, y, ways_slice);
                         let angle = turn_angle(x, y, geometry_slice);
-                        batch.push(TurnEdge::new(xi as u64, yi as u64, angle, mask, turn_flags));
+                        let y_is_ferry =
+                            ways_slice[y.way_idx as usize].highway == HighwayClass::Ferry;
+                        let x_is_ferry =
+                            ways_slice[x.way_idx as usize].highway == HighwayClass::Ferry;
+                        let mut flags = turn_flags;
+                        if y_is_ferry && !x_is_ferry {
+                            flags |= TurnFlags::FERRY;
+                        }
+                        batch.push(TurnEdge::new(xi as u64, yi as u64, angle, mask, flags));
                     }
                     xi = chains_slice[xi].next_incoming();
                 }

@@ -43,11 +43,16 @@ pub struct Profile {
     /// Extra travel-time cost in milliseconds added when passing through a node with
     /// `TRAFFIC_SIGNALS`. Models the average delay at signalised intersections.
     pub traffic_signal_penalty_ms: u32,
-    /// Extra travel-time cost in milliseconds added when traversing a tolled way.
-    /// Set to 0 to accept tolls without penalty.
-    pub toll_penalty_ms: u32,
-    /// Extra travel-time cost in milliseconds added when boarding a ferry.
-    /// Models waiting time at the terminal.
+    /// Time-equivalent penalty for toll roads, in milliseconds per kilometre.
+    /// Applied proportionally to each toll-road segment's length.
+    /// Set to 0 to accept toll roads without penalty.
+    pub toll_road_penalty_ms_per_km: u32,
+    /// Flat time penalty in milliseconds for passing through a toll booth node.
+    /// Models the stop-and-pay delay; applied once per booth regardless of distance.
+    /// Set to 0 to accept toll booths without penalty.
+    pub toll_booth_penalty_ms: u32,
+    /// Flat time penalty in milliseconds added when boarding a ferry.
+    /// Models terminal waiting time; ferry travel time is computed from distance and speed.
     pub ferry_penalty_ms: u32,
     /// Maximum turn-angle penalty in milliseconds (applied at ±180°, U-turn).
     /// Penalty scales quadratically from 0 at 30° to this value at 180°.
@@ -86,7 +91,8 @@ impl Profile {
             weight_250kg: 0,
         },
         traffic_signal_penalty_ms: 15_000,
-        toll_penalty_ms: 5 * 60_000,
+        toll_road_penalty_ms_per_km: 6_000,
+        toll_booth_penalty_ms: 90_000,
         ferry_penalty_ms: 30 * 60_000,
         max_turn_penalty_ms: 30_000,
     };
@@ -109,7 +115,8 @@ impl Profile {
             weight_250kg: 160,
         },
         traffic_signal_penalty_ms: 20_000,
-        toll_penalty_ms: 5 * 60_000,
+        toll_road_penalty_ms_per_km: 12_000,
+        toll_booth_penalty_ms: 90_000,
         ferry_penalty_ms: 30 * 60_000,
         max_turn_penalty_ms: 45_000,
     };
@@ -132,7 +139,8 @@ impl Profile {
             weight_250kg: 0,
         },
         traffic_signal_penalty_ms: 10_000,
-        toll_penalty_ms: 0,
+        toll_road_penalty_ms_per_km: 0,
+        toll_booth_penalty_ms: 0,
         ferry_penalty_ms: 30 * 60_000,
         max_turn_penalty_ms: 5_000,
     };
@@ -148,7 +156,8 @@ impl Profile {
         surface_pct: [100, 100, 100, 95, 85, 75, 60, 0],
         vehicle_dim: VehicleDim::NONE,
         traffic_signal_penalty_ms: 5_000,
-        toll_penalty_ms: 0,
+        toll_road_penalty_ms_per_km: 0,
+        toll_booth_penalty_ms: 0,
         ferry_penalty_ms: 20 * 60_000,
         max_turn_penalty_ms: 1_000,
     };

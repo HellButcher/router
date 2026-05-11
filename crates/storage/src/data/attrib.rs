@@ -32,6 +32,9 @@ bitflags! {
         const TRAFFIC_SIGNALS = 0x01;
         /// Via-node is a toll booth.
         const TOLL            = 0x02;
+        /// This turn boards a ferry (source EdgeNode is not a ferry, destination is).
+        /// `CostModel` applies a flat boarding penalty here rather than per-segment.
+        const FERRY           = 0x04;
     }
 }
 

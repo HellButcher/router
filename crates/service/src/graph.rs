@@ -3,7 +3,7 @@ use std::io;
 use router_algorithm::{Graph, Neighbour};
 use router_storage::{
     data::{
-        attrib::{HighwayClass, TurnFlags, WayFlags},
+        attrib::{TurnFlags, WayFlags},
         edge_node::EdgeNode,
         turn_edge::TurnEdge,
         way::Way,
@@ -101,25 +101,16 @@ impl CostModel for SpeedMap<'_> {
         ) {
             return None;
         }
-        // TODO: toll and ferry penalties should scale with distance (not fixed; currenty applied to each edge))
         let toll_ms = if way.flags.contains(WayFlags::TOLL) {
             if self.avoid_toll {
                 return None;
             }
-            self.profile.toll_penalty_ms as usize
-        } else {
-            0
-        };
-        let ferry_ms = if way.highway == HighwayClass::Ferry {
-            if self.avoid_ferry {
-                return None;
-            }
-            self.profile.ferry_penalty_ms as usize
+            dist_m * self.profile.toll_road_penalty_ms_per_km as usize / 1000
         } else {
             0
         };
         let speed = self.effective_speed(en, way)?;
-        Some((dist_m as f32 * 3600.0 / speed as f32) as usize + toll_ms + ferry_ms)
+        Some((dist_m as f32 * 3600.0 / speed as f32) as usize + toll_ms)
     }
 
     fn turn_cost(&self, te: &TurnEdge) -> Option<usize> {
@@ -135,7 +126,13 @@ impl CostModel for SpeedMap<'_> {
             if self.avoid_toll {
                 return None;
             }
-            cost += self.profile.toll_penalty_ms as usize;
+            cost += self.profile.toll_booth_penalty_ms as usize;
+        }
+        if flags.contains(TurnFlags::FERRY) {
+            if self.avoid_ferry {
+                return None;
+            }
+            cost += self.profile.ferry_penalty_ms as usize;
         }
         cost += turn_angle_penalty(te.turn_angle, self.profile.max_turn_penalty_ms);
         Some(cost)
@@ -287,7 +284,6 @@ impl<C: CostModel, const REVERSE: bool> Iterator for TurnIter<'_, C, REVERSE> {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
 
 /// Quadratic turn-angle penalty: 0 at ≤30°, scales to `max_ms` at 180°.
 #[inline]

@@ -34,9 +34,7 @@ impl AccessFlags {
     /// Alias for `NO_CAR | NO_MOTORCYCLE | NO_HGV`.
     pub const NO_MOTOR: Self = Self::NO_CAR.union(Self::NO_MOTORCYCLE).union(Self::NO_HGV);
     /// All vehicle types blocked.
-    pub const ALL: Self = Self::NO_MOTOR
-        .union(Self::NO_BICYCLE)
-        .union(Self::NO_FOOT);
+    pub const ALL: Self = Self::NO_MOTOR.union(Self::NO_BICYCLE).union(Self::NO_FOOT);
 
     /// Returns the flag bit that represents a block for `vehicle`.
     #[inline]
