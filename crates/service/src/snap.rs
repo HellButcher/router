@@ -2,7 +2,7 @@ use std::io;
 
 use rayon::prelude::*;
 use router_storage::{
-    data::{edge::EdgeFlags, edge_node::EdgeNode, way::Way},
+    data::{edge_node::EdgeNode, way::Way},
     spatial::SpatialIndex,
     tablefile::Ref,
 };
@@ -108,7 +108,7 @@ impl Snapper<'_> {
                     let idx = entry.idx();
                     let en = self.edge_nodes.get(idx)?;
                     let way = self.ways.get(en.way_idx as usize)?;
-                    if vehicle_type.is_some_and(|v| !is_accessible(way, v)) {
+                    if vehicle_type.is_some_and(|v| way.access.blocks(v)) {
                         return None;
                     }
                     let (pos, seg_idx, frac, dist) = self.project(p, en);
@@ -240,12 +240,3 @@ pub fn fractional_distance_on_geometry(
 
 // ── Access check ──────────────────────────────────────────────────────────────
 
-fn is_accessible(way: &Way, vehicle: VehicleType) -> bool {
-    let f = way.access;
-    match vehicle {
-        VehicleType::Car => !f.contains(EdgeFlags::NO_MOTOR),
-        VehicleType::Hgv => !f.contains(EdgeFlags::NO_MOTOR) && !f.contains(EdgeFlags::NO_HGV),
-        VehicleType::Bicycle => !f.contains(EdgeFlags::NO_BICYCLE),
-        VehicleType::Foot => !f.contains(EdgeFlags::NO_FOOT),
-    }
-}

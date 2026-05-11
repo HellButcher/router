@@ -1,33 +1,73 @@
 use std::sync::atomic::AtomicU64;
 
 use bitflags::bitflags;
-use router_types::country::CountryId;
+use router_types::{country::CountryId, vehicle::VehicleType};
 
 use crate::{data::Versioned, pod::TablePod, tablefile::TableData};
 
 use super::{SimpleHeader, node::NO_EDGE};
 
-// TODO: refactor to AccessFlags, VehicleFlags or similar. Use for Edged and Restructions (Turns).
-// Clearly define which Vehicles are allowed and which not.
-// Add helpers for no_* and only_*. constants for ALL and NONE.
 bitflags! {
-    /// Per-direction vehicle-access restrictions for a single edge.
+    /// Bitmask of vehicle types that are **blocked** on a way or turn.
+    ///
+    /// Used in `Way::access` (per-direction road restrictions) and
+    /// `TurnEdge::restriction_mask` (per-turn OSM restrictions).
+    /// `AccessFlags::empty()` means no vehicle is blocked (unrestricted).
     #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
     #[repr(transparent)]
-    pub struct EdgeFlags: u8 {
-        /// Motor vehicles not allowed.
-        const NO_MOTOR   = 0x01;
+    pub struct AccessFlags: u8 {
+        /// Private cars (passenger vehicles) not allowed.
+        const NO_CAR        = 0x01;
+        /// Motorcycles, mopeds, and scooters not allowed.
+        const NO_MOTORCYCLE = 0x02;
         /// HGV (heavy goods vehicles) not allowed.
-        const NO_HGV     = 0x02;
+        const NO_HGV        = 0x04;
         /// Bicycles not allowed.
-        const NO_BICYCLE = 0x04;
+        const NO_BICYCLE    = 0x08;
         /// Pedestrians not allowed.
-        const NO_FOOT    = 0x08;
+        const NO_FOOT       = 0x10;
     }
 }
 
-unsafe impl bytemuck::Zeroable for EdgeFlags {}
-unsafe impl bytemuck::Pod for EdgeFlags {}
+impl AccessFlags {
+    /// All motor vehicles (cars + motorcycles + HGV) blocked.
+    /// Alias for `NO_CAR | NO_MOTORCYCLE | NO_HGV`.
+    pub const NO_MOTOR: Self = Self::NO_CAR.union(Self::NO_MOTORCYCLE).union(Self::NO_HGV);
+    /// All vehicle types blocked.
+    pub const ALL: Self = Self::NO_MOTOR
+        .union(Self::NO_BICYCLE)
+        .union(Self::NO_FOOT);
+
+    /// Returns the flag bit that represents a block for `vehicle`.
+    #[inline]
+    pub const fn flag_for(vehicle: VehicleType) -> Self {
+        match vehicle {
+            VehicleType::Car => Self::NO_CAR,
+            VehicleType::Hgv => Self::NO_HGV,
+            VehicleType::Bicycle => Self::NO_BICYCLE,
+            VehicleType::Foot => Self::NO_FOOT,
+            VehicleType::Motorcycle => Self::NO_MOTORCYCLE,
+        }
+    }
+
+    /// Returns `true` if `vehicle` is blocked by this flag set.
+    #[inline]
+    pub fn blocks(self, vehicle: VehicleType) -> bool {
+        self.contains(Self::flag_for(vehicle))
+    }
+
+    /// Returns `true` if `vehicle` is allowed (not blocked) by this flag set.
+    #[inline]
+    pub fn allows(self, vehicle: VehicleType) -> bool {
+        !self.blocks(vehicle)
+    }
+}
+
+unsafe impl bytemuck::Zeroable for AccessFlags {}
+unsafe impl bytemuck::Pod for AccessFlags {}
+
+/// Compatibility alias; prefer `AccessFlags` in new code.
+pub type EdgeFlags = AccessFlags;
 
 #[repr(C)]
 #[derive(Debug)]
@@ -46,7 +86,7 @@ pub struct Edge {
     /// Per-direction max speed in km/h; 0 means fall back to `Way::max_speed`.
     pub max_speed: u8,
     /// Per-direction vehicle access restrictions.
-    pub flags: EdgeFlags,
+    pub flags: AccessFlags,
     /// Country where this edge segment is located. Set during Phase 4 resolution.
     pub country_id: CountryId,
     _pad: [u8; 3],
@@ -60,7 +100,7 @@ impl Edge {
     /// `from` / `to` are raw `NodeId` values cast to `u64`.
     /// `way_id_raw` is the OSM `WayId` — stored in `way_idx` until Phase 4
     /// overwrites it with the Way table index via [`Edge::resolve`].
-    pub fn new(from: u64, to: u64, way_id_raw: i64, flags: EdgeFlags, max_speed: u8) -> Self {
+    pub fn new(from: u64, to: u64, way_id_raw: i64, flags: AccessFlags, max_speed: u8) -> Self {
         Self {
             from_node_idx: from,
             to_node_idx: to,

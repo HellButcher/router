@@ -554,7 +554,8 @@ fn compute_level_lens(num_items: usize, node_size: usize) -> Vec<usize> {
 // ── geometry ──────────────────────────────────────────────────────────────────
 
 fn min_dist_to_bbox_m(lat: f32, lon: f32, e: &RTreeEntry) -> f32 {
-    // TODO: distance when inside bbox = 0, not distance to edge.
+    // clamp projects the query point onto the bbox surface; when the point is
+    // inside the bbox both clamps are no-ops and haversine returns 0.
     haversine_m(
         lat,
         lon,

@@ -4,7 +4,6 @@ use router_algorithm::{Graph, Neighbour};
 use router_storage::{
     data::{
         attrib::{HighwayClass, TurnFlags, WayFlags},
-        edge::EdgeFlags,
         edge_node::EdgeNode,
         turn_edge::TurnEdge,
         way::Way,
@@ -39,14 +38,14 @@ pub struct DistanceCost {
 
 impl CostModel for DistanceCost {
     fn traversal_cost(&self, dist_m: usize, _en: &EdgeNode, way: &Way) -> Option<usize> {
-        if way.access.contains(access_flag(self.vehicle_type)) {
+        if way.access.blocks(self.vehicle_type) {
             return None;
         }
         Some(dist_m)
     }
 
     fn turn_cost(&self, te: &TurnEdge) -> Option<usize> {
-        if te.restriction_mask.contains(access_flag(self.vehicle_type)) {
+        if te.restriction_mask.blocks(self.vehicle_type) {
             return None;
         }
         Some(0)
@@ -91,7 +90,7 @@ impl SpeedMap<'_> {
 
 impl CostModel for SpeedMap<'_> {
     fn traversal_cost(&self, dist_m: usize, en: &EdgeNode, way: &Way) -> Option<usize> {
-        if way.access.contains(access_flag(self.profile.vehicle_type)) {
+        if way.access.blocks(self.profile.vehicle_type) {
             return None;
         }
         if way.dim.blocks_vehicle(
@@ -124,10 +123,7 @@ impl CostModel for SpeedMap<'_> {
     }
 
     fn turn_cost(&self, te: &TurnEdge) -> Option<usize> {
-        if te
-            .restriction_mask
-            .contains(access_flag(self.profile.vehicle_type))
-        {
+        if te.restriction_mask.blocks(self.profile.vehicle_type) {
             return None;
         }
         let flags = te.turn_flags;
@@ -292,15 +288,6 @@ impl<C: CostModel, const REVERSE: bool> Iterator for TurnIter<'_, C, REVERSE> {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-#[inline]
-fn access_flag(vehicle: VehicleType) -> EdgeFlags {
-    match vehicle {
-        VehicleType::Car => EdgeFlags::NO_MOTOR,
-        VehicleType::Hgv => EdgeFlags::NO_HGV,
-        VehicleType::Bicycle => EdgeFlags::NO_BICYCLE,
-        VehicleType::Foot => EdgeFlags::NO_FOOT,
-    }
-}
 
 /// Quadratic turn-angle penalty: 0 at ≤30°, scales to `max_ms` at 180°.
 #[inline]

@@ -114,5 +114,5 @@ impl TableData for Way {
 }
 
 impl Versioned for Way {
-    const VERSION: u32 = 7;
+    const VERSION: u32 = 8;
 }
