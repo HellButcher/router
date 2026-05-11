@@ -1,43 +1,9 @@
 use router_storage::data::{
-    attrib::{HighwayClass, NodeFlags, WayFlags},
-    edge::{Edge, EdgeFlags},
-    node::Node,
+    attrib::{HighwayClass, WayFlags},
+    edge::EdgeFlags,
+    edge_node::EdgeNode,
     way::Way,
 };
-
-use crate::Service;
-
-// ── WayTraversal ──────────────────────────────────────────────────────────────
-
-/// All nodes and edges belonging to one OSM way, in traversal order.
-pub struct WayTraversal {
-    pub nodes: Vec<NodeMeta>,
-    pub edges: Vec<EdgeMeta>,
-    /// Storage node indices parallel to `nodes`, used for position lookup.
-    node_storage_indices: Vec<usize>,
-}
-
-impl WayTraversal {
-    /// Returns the position of a node in `nodes` by its storage index.
-    pub fn node_pos(&self, storage_idx: usize) -> Option<usize> {
-        self.node_storage_indices
-            .iter()
-            .position(|&i| i == storage_idx)
-    }
-}
-
-impl Service {
-    /// Collect all ordered nodes and edges of the OSM way identified by `way_idx`.
-    ///
-    /// TODO: reimplement against EdgeNode / TurnEdge / geometry.bin once Phase 3 is done.
-    pub fn collect_way(&self, _way_idx: usize, _way: &Way) -> WayTraversal {
-        WayTraversal {
-            nodes: Vec::new(),
-            edges: Vec::new(),
-            node_storage_indices: Vec::new(),
-        }
-    }
-}
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -54,45 +20,6 @@ fn is_zero_u16(n: &u16) -> bool {
     *n == 0
 }
 
-// ── NodeMeta ──────────────────────────────────────────────────────────────────
-
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-pub struct NodeMeta {
-    pub id: i64,
-    pub lat: f32,
-    pub lon: f32,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
-    pub no_motor: bool,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
-    pub no_hgv: bool,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
-    pub no_bicycle: bool,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
-    pub no_foot: bool,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
-    pub traffic_signals: bool,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
-    pub toll: bool,
-}
-
-impl NodeMeta {
-    pub fn from(node: &Node) -> Self {
-        Self {
-            id: node.id.0,
-            lat: node.pos.lat,
-            lon: node.pos.lon,
-            no_motor: node.node_flags().contains(NodeFlags::NO_MOTOR),
-            no_hgv: node.node_flags().contains(NodeFlags::NO_HGV),
-            no_bicycle: node.node_flags().contains(NodeFlags::NO_BICYCLE),
-            no_foot: node.node_flags().contains(NodeFlags::NO_FOOT),
-            traffic_signals: node.node_flags().contains(NodeFlags::TRAFFIC_SIGNALS),
-            toll: node.node_flags().contains(NodeFlags::TOLL),
-        }
-    }
-}
-
 // ── WayMeta ──────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug)]
@@ -101,6 +28,9 @@ impl NodeMeta {
 pub struct WayMeta {
     /// OSM way ID.
     pub id: i64,
+    /// Max speed from OSM tag in km/h; 0 means use highway-class default.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_zero_u8"))]
+    pub max_speed: u8,
     pub highway: String,
     pub surface_quality: String,
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
@@ -123,6 +53,15 @@ pub struct WayMeta {
     /// Maximum allowed weight in kilograms; 0 = no restriction.
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_zero_u16"))]
     pub max_weight_kg: u16,
+    /// Per-direction access flags (from the representative edge).
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
+    pub no_motor: bool,
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
+    pub no_hgv: bool,
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
+    pub no_bicycle: bool,
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
+    pub no_foot: bool,
 }
 
 impl WayMeta {
@@ -130,6 +69,7 @@ impl WayMeta {
     pub fn from(way: &Way) -> Self {
         Self {
             id: way.id.0,
+            max_speed: way.max_speed,
             highway: format!("{:?}", way.highway),
             surface_quality: format!("{:?}", way.surface_quality),
             oneway: way.flags.contains(WayFlags::ONEWAY),
@@ -141,6 +81,10 @@ impl WayMeta {
             max_height_cm: way.dim.max_height_dm as u16 * 10,
             max_width_cm: way.dim.max_width_dm as u16 * 10,
             max_weight_kg: way.dim.max_weight_250kg as u16 * 250,
+            no_motor: way.access.contains(EdgeFlags::NO_MOTOR),
+            no_hgv: way.access.contains(EdgeFlags::NO_HGV),
+            no_bicycle: way.access.contains(EdgeFlags::NO_BICYCLE),
+            no_foot: way.access.contains(EdgeFlags::NO_FOOT),
         }
     }
 }
@@ -151,23 +95,11 @@ impl WayMeta {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct EdgeMeta {
-    /// Max speed from OSM tag in km/h; 0 means use highway-class default.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_zero_u8"))]
-    pub max_speed: u8,
     /// ISO 3166-1 alpha-2 country code, or `null` if unknown.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub country_id: Option<String>,
     /// Length of the representative edge segment in metres.
-    pub dist_m: u16,
-    /// Per-direction access flags (from the representative edge).
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
-    pub no_motor: bool,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
-    pub no_hgv: bool,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
-    pub no_bicycle: bool,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
-    pub no_foot: bool,
+    pub dist_m: u32,
     /// Index of the from-node of this edge within the accompanying `node_meta` array.
     /// Only present when `node_meta` is populated.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
@@ -179,15 +111,10 @@ pub struct EdgeMeta {
 }
 
 impl EdgeMeta {
-    pub fn from(edge: &Edge, from_node_idx: Option<usize>, to_node_idx: Option<usize>) -> Self {
+    pub fn from(edge: &EdgeNode, from_node_idx: Option<usize>, to_node_idx: Option<usize>) -> Self {
         Self {
-            max_speed: edge.max_speed,
             country_id: edge.country_id.to_iso2().map(str::to_owned),
             dist_m: edge.dist_m,
-            no_motor: edge.flags.contains(EdgeFlags::NO_MOTOR),
-            no_hgv: edge.flags.contains(EdgeFlags::NO_HGV),
-            no_bicycle: edge.flags.contains(EdgeFlags::NO_BICYCLE),
-            no_foot: edge.flags.contains(EdgeFlags::NO_FOOT),
             from_node_idx,
             to_node_idx,
         }

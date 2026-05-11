@@ -61,21 +61,21 @@ pub fn dijkstra_with_stop_condition(
         }
         for edge in graph.outbound(position) {
             let next_cost = cost + edge.cost;
-            match dist.entry(edge.node) {
+            match dist.entry(edge.edge_node_idx) {
                 Entry::Occupied(mut e) if next_cost < *e.get() => {
                     e.insert(next_cost);
-                    predecessors.insert(edge.node, position);
+                    predecessors.insert(edge.edge_node_idx, position);
                     heap.push(HeapState {
                         cost: next_cost,
-                        position: edge.node,
+                        position: edge.edge_node_idx,
                     });
                 }
                 Entry::Vacant(e) => {
                     e.insert(next_cost);
-                    predecessors.insert(edge.node, position);
+                    predecessors.insert(edge.edge_node_idx, position);
                     heap.push(HeapState {
                         cost: next_cost,
-                        position: edge.node,
+                        position: edge.edge_node_idx,
                     });
                 }
                 _ => {}
@@ -91,10 +91,19 @@ pub fn dijkstra_with_stop_condition(
 /// Returns `Some((path, cost))` where `path` is the sequence of node indices
 /// from `start` to `goal` (inclusive) and `cost` is the total edge cost.
 /// Returns `None` if no path exists.
-pub fn dikstra(graph: impl Graph, start: usize, goal: usize) -> Option<(Vec<usize>, usize)> {
+pub fn dikstra(
+    graph: impl Graph,
+    start: usize,
+    goal: usize,
+    construct_path: bool,
+) -> Option<(Vec<usize>, usize)> {
     let (dist, predecessors) = dijkstra_with_stop_condition(graph, start, |pos| pos == goal);
     let cost = *dist.get(&goal)?;
-    let path = reconstruct_path(&predecessors, start, goal);
+    let path = if construct_path {
+        reconstruct_path(&predecessors, start, goal)
+    } else {
+        Vec::new()
+    };
     Some((path, cost))
 }
 
@@ -131,19 +140,19 @@ pub fn dijkstra_within_budget(
             if next_cost > budget {
                 continue; // prune: settling this node would exceed budget
             }
-            match dist.entry(edge.node) {
+            match dist.entry(edge.edge_node_idx) {
                 Entry::Occupied(mut e) if next_cost < *e.get() => {
                     e.insert(next_cost);
                     heap.push(HeapState {
                         cost: next_cost,
-                        position: edge.node,
+                        position: edge.edge_node_idx,
                     });
                 }
                 Entry::Vacant(e) => {
                     e.insert(next_cost);
                     heap.push(HeapState {
                         cost: next_cost,
-                        position: edge.node,
+                        position: edge.edge_node_idx,
                     });
                 }
                 _ => {}

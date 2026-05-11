@@ -1,7 +1,5 @@
 use std::time::Duration;
 
-use rayon::prelude::*;
-
 use router_algorithm::{
     a_star::a_star, bidir_a_star::bidir_a_star, bidir_dijkstra::bidir_dijkstra, dikstra::dikstra,
 };
@@ -11,9 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{Error, Result},
-    graph::{RoadGraph, SpeedMap, haversine_m},
-    locate::SnapMode,
-    snap::{EdgeSnapper, Snap},
+    graph::{SpeedMap, haversine_m},
+    snap::Snap,
     virtual_graph::{VIRTUAL_GOAL, VIRTUAL_START, VirtualGraph},
 };
 
@@ -46,14 +43,20 @@ impl Algorithm {
         graph: impl router_algorithm::Graph,
         start: usize,
         goal: usize,
+        construct_path: bool,
     ) -> Option<(Vec<usize>, usize)> {
         match self {
-            Algorithm::Dijkstra => dikstra(graph, start, goal),
-            Algorithm::BidirDijkstra => bidir_dijkstra(graph, start, goal),
-            Algorithm::AStar => a_star(graph, start, goal),
-            Algorithm::BidirAStar => bidir_a_star(graph, start, goal),
+            Algorithm::Dijkstra => dikstra(graph, start, goal, construct_path),
+            Algorithm::BidirDijkstra => bidir_dijkstra(graph, start, goal, construct_path),
+            Algorithm::AStar => a_star(graph, start, goal, construct_path),
+            Algorithm::BidirAStar => bidir_a_star(graph, start, goal, construct_path),
         }
     }
+}
+
+#[inline]
+fn true_value() -> bool {
+    true
 }
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -66,10 +69,9 @@ pub struct RouteRequest {
 
     pub locations: Locations,
 
-    /// Whether to snap waypoints to the nearest node or the nearest point on a
-    /// way segment. Defaults to [`SnapMode::Edge`].
-    #[cfg_attr(feature = "serde", serde(default))]
-    pub snap_mode: SnapMode,
+    /// Weather to include the path geometry in the response. Defaults to `true` (i.e. include the path).
+    #[cfg_attr(feature = "serde", serde(default = "true_value"))]
+    pub with_path: bool,
 
     /// Search algorithm used to find the shortest path. Defaults to [`Algorithm::AStar`].
     #[cfg_attr(feature = "serde", serde(default))]
@@ -125,6 +127,10 @@ pub struct Leg {
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub leg_summary: Summary,
 
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Points::is_empty")
+    )]
     pub path: Points,
 
     #[cfg_attr(
@@ -182,8 +188,8 @@ impl Service {
     pub async fn calculate_route(&self, request: RouteRequest) -> Result<RouteResponse> {
         let profile = self.get_opt_profile(request.profile.as_deref())?;
         let units = request.units;
-        let snap_mode = request.snap_mode;
-        let locations: Vec<Location> = request.locations.try_into()?;
+        let with_path = request.with_path;
+        let mut locations: Vec<Location> = request.locations.try_into()?;
 
         if locations.len() < 2 {
             return Err(Error::InvalidRequest(
@@ -191,59 +197,9 @@ impl Service {
             ));
         }
 
-        let snapper = EdgeSnapper {
-            nodes: &self.nodes,
-            edges: &self.edges,
-            ways: &self.ways,
-            edge_spatial: &self.edge_spatial,
-        };
-
         // Snap each location.
-        let snaps: Vec<Snap> = locations
-            .par_iter()
-            .map(|loc| {
-                let snap = match snap_mode {
-                    SnapMode::Node => self
-                        .node_spatial
-                        .nearest(loc.lat, loc.lon, self.max_radius_m)
-                        .map(|(idx, lat, lon, _)| Snap::Node {
-                            node_idx: idx as usize,
-                            pos: router_types::coordinate::LatLon(lat, lon),
-                        }),
-                    SnapMode::Edge => snapper
-                        .snap_to_edge(
-                            loc.lat,
-                            loc.lon,
-                            self.max_radius_m,
-                            Some(profile.vehicle_type),
-                        )
-                        .map(Snap::Edge),
-                };
-                snap.ok_or_else(|| {
-                    Error::InvalidRequest(format!(
-                        "no routable position found near ({}, {})",
-                        loc.lat, loc.lon
-                    ))
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        // Build canonical waypoint locations from snaps.
-        let snapped_locations: Vec<Location> = snaps
-            .iter()
-            .zip(locations)
-            .map(|(snap, loc)| match snap {
-                Snap::Node { pos, .. } => Location {
-                    coordinate: *pos,
-                    ..loc
-                },
-                Snap::Edge(e) => Location {
-                    coordinate: e.pos,
-                    fraction: Some(e.fraction),
-                    ..loc
-                },
-            })
-            .collect();
+        let snaps: Vec<Vec<Snap>> =
+            self.snap_all_mut(units, Some(profile.vehicle_type), &mut locations)?;
 
         // Route leg by leg (one leg per consecutive location pair).
         let mut legs: Vec<Leg> = Vec::with_capacity(snaps.len() - 1);
@@ -251,30 +207,26 @@ impl Service {
         let mut trip_duration_ms: u64 = 0;
         let mut trip_length_m: u32 = 0;
 
+        // TODO: paralelize using par_windows(2).map(...).collect()
         for window in snaps.windows(2) {
             let (start_snap, goal_snap) = (&window[0], &window[1]);
-
-            let inner = RoadGraph {
-                nodes: &self.nodes,
-                edges: &self.edges,
-                ways: &self.ways,
-                cost_model: SpeedMap {
-                    profile,
-                    speed_config: &self.speed_config,
-                    avoid_toll: request.avoid_toll,
-                    avoid_ferry: request.avoid_ferry,
-                },
-                goal_pos: goal_snap.pos(),
-            };
+            let inner = self.road_graph(SpeedMap {
+                profile,
+                speed_config: &self.speed_config,
+                avoid_toll: request.avoid_toll,
+                avoid_ferry: request.avoid_ferry,
+            })?;
             let (graph, start_idx, goal_idx) = VirtualGraph::new(inner, start_snap, goal_snap);
 
-            let Some((path_nodes, cost_ms)) = request.algorithm.run(&graph, start_idx, goal_idx)
+            let Some((path_nodes, cost_ms)) = request
+                .algorithm
+                .run(&graph, start_idx, goal_idx, with_path)
             else {
                 return Ok(RouteResponse {
                     id: request.id,
                     profile: profile.name.to_owned(),
                     units,
-                    locations: snapped_locations,
+                    locations,
                     trip_summary: Summary {
                         duration: Duration::ZERO,
                         length: 0,
@@ -286,9 +238,9 @@ impl Service {
 
             // Resolve a path node index to a position, handling virtual sentinels.
             let resolve_pos = |idx: usize| match idx {
-                VIRTUAL_START => start_snap.pos(),
-                VIRTUAL_GOAL => goal_snap.pos(),
-                i => self.nodes.get(i).map(|n| n.pos).unwrap_or(start_snap.pos()),
+                VIRTUAL_START => start_snap.first().unwrap().pos,
+                VIRTUAL_GOAL => goal_snap.first().unwrap().pos,
+                i => graph.geometry[graph.edge_nodes[i].geometry_to_idx()],
             };
 
             // Build geometry and compute leg metrics.
@@ -325,7 +277,7 @@ impl Service {
             id: request.id,
             profile: profile.name.to_owned(),
             units,
-            locations: snapped_locations,
+            locations,
             trip_summary: Summary {
                 duration: Duration::from_millis(trip_duration_ms),
                 length: trip_length_m,

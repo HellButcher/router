@@ -18,11 +18,12 @@ pub mod virtual_graph;
 use crate::error::{Error, Result};
 use profile::{PROFILES, Profile};
 use router_storage::{
-    data::{edge::Edge, node::Node, way::Way},
+    data::{edge_node::EdgeNode, turn_edge::TurnEdge, way::Way},
     idindex::IdEntry,
     spatial::SpatialIndex,
     tablefile::TableFile,
 };
+use router_types::coordinate::LatLon;
 use speed_config::SpeedConfig;
 
 pub struct ServiceOptions {
@@ -43,12 +44,11 @@ impl Default for ServiceOptions {
 
 pub struct Service {
     profiles: Vec<&'static Profile>,
-    pub(crate) node_spatial: SpatialIndex,
-    pub(crate) edge_spatial: SpatialIndex,
-    pub(crate) nodes: TableFile<Node>,
-    pub(crate) edges: TableFile<Edge>,
+    pub(crate) edge_node_spatial: SpatialIndex,
+    pub(crate) edge_nodes: TableFile<EdgeNode>,
+    pub(crate) turn_edges: TableFile<TurnEdge>,
+    pub(crate) geometry: TableFile<LatLon>,
     pub(crate) ways: TableFile<Way>,
-    pub(crate) node_id_index: TableFile<IdEntry>,
     pub(crate) way_id_index: TableFile<IdEntry>,
     pub(crate) max_radius_m: f32,
     pub(crate) speed_config: SpeedConfig,
@@ -56,29 +56,27 @@ pub struct Service {
 
 impl Service {
     pub fn open(options: ServiceOptions) -> io::Result<Self> {
-        let node_spatial = SpatialIndex::open(options.storage_dir.join("node_spatial.bin"))?;
-        let edge_spatial = SpatialIndex::open(options.storage_dir.join("edge_spatial.bin"))?;
-        let nodes = TableFile::<Node>::open_read_only(options.storage_dir.join("nodes.bin"))?;
-        let edges = TableFile::<Edge>::open_read_only(options.storage_dir.join("edges.bin"))?;
-        let ways = TableFile::<Way>::open_read_only(options.storage_dir.join("ways.bin"))?;
-        let node_id_index =
-            TableFile::<IdEntry>::open_read_only(options.storage_dir.join("node_id_index.bin"))?;
-        let way_id_index =
-            TableFile::<IdEntry>::open_read_only(options.storage_dir.join("way_id_index.bin"))?;
-        nodes.header()?.verify()?;
-        edges.header()?.verify()?;
+        let d = &options.storage_dir;
+        let edge_node_spatial = SpatialIndex::open(d.join("edge_node_spatial.bin"))?;
+        let edge_nodes = TableFile::<EdgeNode>::open_read_only(d.join("edge_nodes.bin"))?;
+        let turn_edges = TableFile::<TurnEdge>::open_read_only(d.join("turn_edges.bin"))?;
+        let geometry = TableFile::<LatLon>::open_read_only(d.join("geometry.bin"))?;
+        let ways = TableFile::<Way>::open_read_only(d.join("ways.bin"))?;
+        let way_id_index = TableFile::<IdEntry>::open_read_only(d.join("way_id_index.bin"))?;
+
+        edge_nodes.header()?.verify()?;
+        turn_edges.header()?.verify()?;
+        geometry.header()?.verify()?;
         ways.header()?.verify()?;
-        node_id_index.header()?.verify()?;
         way_id_index.header()?.verify()?;
 
         Ok(Self {
             profiles: PROFILES.to_vec(),
-            node_spatial,
-            edge_spatial,
-            nodes,
-            edges,
+            edge_node_spatial,
+            edge_nodes,
+            turn_edges,
+            geometry,
             ways,
-            node_id_index,
             way_id_index,
             max_radius_m: options.max_radius_m,
             speed_config: options.speed_config,

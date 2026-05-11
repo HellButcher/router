@@ -52,6 +52,15 @@ impl LatLon {
     pub const fn new(lat: f32, lon: f32) -> Self {
         Self { lat, lon }
     }
+
+    pub const fn is_quasi_equal(&self, other: Self) -> bool {
+        self.is_quasi_equal_eps(other, f32::EPSILON)
+    }
+
+    #[inline]
+    pub const fn is_quasi_equal_eps(&self, other: Self, epsilon: f32) -> bool {
+        (self.lat - other.lat).abs() <= epsilon && (self.lon - other.lon).abs() <= epsilon
+    }
 }
 
 #[inline(always)]
@@ -143,6 +152,18 @@ impl From<[f32; 2]> for LatLon {
         Self { lat, lon }
     }
 }
+impl From<&(f32, f32)> for LatLon {
+    #[inline(always)]
+    fn from(&(lat, lon): &(f32, f32)) -> Self {
+        Self { lat, lon }
+    }
+}
+impl From<&[f32; 2]> for LatLon {
+    #[inline(always)]
+    fn from(&[lat, lon]: &[f32; 2]) -> Self {
+        Self { lat, lon }
+    }
+}
 impl From<LatLon> for (f32, f32) {
     #[inline(always)]
     fn from(v: LatLon) -> Self {
@@ -152,6 +173,18 @@ impl From<LatLon> for (f32, f32) {
 impl From<LatLon> for [f32; 2] {
     #[inline(always)]
     fn from(v: LatLon) -> Self {
+        [v.lat, v.lon]
+    }
+}
+impl From<&LatLon> for (f32, f32) {
+    #[inline(always)]
+    fn from(v: &LatLon) -> Self {
+        (v.lat, v.lon)
+    }
+}
+impl From<&LatLon> for [f32; 2] {
+    #[inline(always)]
+    fn from(v: &LatLon) -> Self {
         [v.lat, v.lon]
     }
 }

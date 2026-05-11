@@ -30,8 +30,7 @@ impl PageFile {
         if file_len < Self::PAGE_SIZE as u64 {
             return Err(io::ErrorKind::UnexpectedEof.into());
         } else if file_len > isize::MAX as u64 {
-            //TODO: nightly: return Err(io::ErrorKind::FileTooLarge.into());
-            return Err(io::ErrorKind::OutOfMemory.into());
+            return Err(io::ErrorKind::FileTooLarge.into());
         }
         let mmap = unsafe { MmapOptions::new().len(file_len as usize).map(&file) }?;
         Ok(Self { file, mmap })
@@ -77,8 +76,7 @@ impl PageFileMut {
         } else if file_len < Self::PAGE_SIZE as u64 {
             return Err(io::ErrorKind::UnexpectedEof.into());
         } else if file_len > isize::MAX as u64 {
-            //TODO: nightly: return Err(io::ErrorKind::FileTooLarge.into());
-            return Err(io::ErrorKind::OutOfMemory.into());
+            return Err(io::ErrorKind::FileTooLarge.into());
         }
         let mmap = unsafe { MmapOptions::new().len(file_len as usize).map_mut(&file) }?;
         Ok(Self {

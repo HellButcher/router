@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::{ErrorKind, IoSlice, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
 use std::mem::size_of;
-use std::ops::Deref;
+use std::ops::{Deref, RangeBounds};
 use std::path::Path;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -356,8 +356,7 @@ impl<D: TableData> TableFile<D> {
 
     fn grow_mmap(mmap: &mut MmapRaw, new_len: u64) -> Result<()> {
         if new_len > isize::MAX as u64 {
-            //TODO: nightly: return Err(io::ErrorKind::FileTooLarge.into());
-            return Err(io::ErrorKind::OutOfMemory.into());
+            return Err(io::ErrorKind::FileTooLarge.into());
         }
         let old_len = mmap.len();
         let new_len = new_len as usize;
@@ -452,6 +451,36 @@ impl<D: TableData> TableFile<D> {
         let ptr: NonNull<D> = unsafe { NonNull::new(mmap.as_ptr().add(offset) as _).unwrap() };
         let slice = NonNull::slice_from_raw_parts(ptr, len);
         Ok(Ref(mmap, slice))
+    }
+
+    #[inline]
+    pub fn get_range<R: RangeBounds<usize>>(&self, range: R) -> Result<Ref<'_, [D]>> {
+        let start = match range.start_bound() {
+            std::ops::Bound::Included(&s) => s,
+            std::ops::Bound::Excluded(&s) => {
+                if s == usize::MAX {
+                    return self.get_slice(0, 0);
+                } else {
+                    s + 1
+                }
+            }
+            std::ops::Bound::Unbounded => 0,
+        };
+        let len = match range.end_bound() {
+            std::ops::Bound::Included(&e) => {
+                if e < start {
+                    return self.get_slice(0, 0);
+                } else {
+                    e - start + 1
+                }
+            }
+            std::ops::Bound::Excluded(&e) => e.saturating_sub(start),
+            std::ops::Bound::Unbounded => self.len().saturating_sub(start),
+        };
+        if len == 0 {
+            return self.get_slice(0, 0);
+        }
+        self.get_slice(start, len)
     }
 
     pub fn truncate(&mut self, new_len: usize) -> Result<()> {

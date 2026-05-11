@@ -4,18 +4,15 @@ use std::time::Duration;
 use rayon::prelude::*;
 use router_algorithm::dikstra::dijkstra_ssmt;
 use router_algorithm::reconstruct_path;
-use router_storage::data::attrib::WayFlags;
-use router_storage::data::edge::Edge;
-use router_storage::data::node::Node;
+use router_storage::data::edge_node::EdgeNode;
 use router_storage::data::way::Way;
-use router_storage::tablefile::TableFile;
+use router_types::coordinate::LatLon;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::graph::{CostModel, RoadGraph, SpeedMap, haversine_m};
-use crate::profile::VehicleType;
-use crate::snap::{EdgeSnap, EdgeSnapper, Snap};
+use crate::graph::{CostModel, SpeedMap, haversine_m};
+use crate::snap::Snap;
 use crate::virtual_graph::{VIRTUAL_START, VirtualGraph};
 
 use super::{
@@ -67,7 +64,7 @@ pub struct MatrixRequest {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct MatrixSummary {
     pub duration: Duration,
-    pub length: u32,
+    pub length: f32,
 }
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -103,7 +100,7 @@ impl Service {
         let profile = self.get_opt_profile(request.profile.as_deref())?;
         let units = request.units;
 
-        let (from_locs, to_locs) = match request.locations {
+        let (mut from_locs, mut to_locs) = match request.locations {
             MatrixRequestLocations::Symetric { locations } => {
                 let locations: Vec<Location> = locations.try_into()?;
                 (locations.clone(), locations)
@@ -117,20 +114,8 @@ impl Service {
             ));
         }
 
-        let snapper = EdgeSnapper {
-            nodes: &self.nodes,
-            edges: &self.edges,
-            ways: &self.ways,
-            edge_spatial: &self.edge_spatial,
-        };
-
-        let from_snaps = snap_all(
-            &from_locs,
-            &snapper,
-            profile.vehicle_type,
-            self.max_radius_m,
-        )?;
-        let to_snaps = snap_all(&to_locs, &snapper, profile.vehicle_type, self.max_radius_m)?;
+        let from_snaps = self.snap_all_mut(units, Some(profile.vehicle_type), &mut from_locs)?;
+        let to_snaps = self.snap_all_mut(units, Some(profile.vehicle_type), &mut to_locs)?;
 
         let pairs: Vec<(usize, usize)> = if request.pairs.is_empty() {
             (0..from_snaps.len())
@@ -163,7 +148,7 @@ impl Service {
                     to: j,
                     summary: MatrixSummary {
                         duration: Duration::ZERO,
-                        length: 0,
+                        length: 0.0,
                     },
                 });
             } else {
@@ -182,14 +167,12 @@ impl Service {
         let routed: Vec<(usize, MatrixResponseEntry)> = by_origin
             .into_par_iter()
             .flat_map(|(from_idx, dest_pairs)| {
-                compute_origin(
+                self.compute_origin(
+                    units,
                     from_idx,
                     &dest_pairs,
                     &from_snaps,
                     &to_snaps,
-                    &self.nodes,
-                    &self.edges,
-                    &self.ways,
                     speed_map,
                 )
             })
@@ -210,107 +193,83 @@ impl Service {
             result,
         })
     }
-}
 
-// ── Per-origin SSMT computation ───────────────────────────────────────────────
+    // ── Per-origin SSMT computation ───────────────────────────────────────────────
 
-fn compute_origin<C: CostModel + Copy>(
-    from_idx: usize,
-    dest_pairs: &[(usize, usize)], // (pair_idx, dest_idx)
-    from_snaps: &[Snap],
-    to_snaps: &[Snap],
-    nodes: &TableFile<Node>,
-    edges: &TableFile<Edge>,
-    ways: &TableFile<Way>,
-    cost_model: C,
-) -> Vec<(usize, MatrixResponseEntry)> {
-    let from_snap = &from_snaps[from_idx];
+    fn compute_origin<C: CostModel + Copy>(
+        &self,
+        units: Unit,
+        from_idx: usize,
+        dest_pairs: &[(usize, usize)], // (pair_idx, dest_idx)
+        from_snaps: &[Vec<Snap>],
+        to_snaps: &[Vec<Snap>],
+        cost_model: C,
+    ) -> Vec<(usize, MatrixResponseEntry)> {
+        let from_snap = &from_snaps[from_idx];
 
-    // Collect the real graph nodes adjacent to every destination.
-    let mut target_nodes: HashSet<usize> = HashSet::new();
-    for &(_, to_idx) in dest_pairs {
-        match &to_snaps[to_idx] {
-            Snap::Node { node_idx, .. } => {
-                target_nodes.insert(*node_idx);
-            }
-            Snap::Edge(e) => {
-                target_nodes.insert(e.from_node_idx);
-                target_nodes.insert(e.to_node_idx);
+        // Collect the real graph nodes adjacent to every destination.
+        let mut target_edge_nodes: HashSet<usize> = HashSet::new();
+        for &(_, to_idx) in dest_pairs {
+            for snap in &to_snaps[to_idx] {
+                target_edge_nodes.insert(snap.edge_node_idx);
             }
         }
-    }
 
-    let inner = RoadGraph {
-        nodes,
-        edges,
-        ways,
-        cost_model,
-        goal_pos: from_snap.pos(),
-    };
-    let (graph, start_idx) = VirtualGraph::new_from_start(inner, from_snap);
-
-    let (time_costs, predecessors) = dijkstra_ssmt(&graph, start_idx, &target_nodes);
-
-    let mut entries = Vec::new();
-    for &(pair_idx, to_idx) in dest_pairs {
-        let to_snap = &to_snaps[to_idx];
-
-        let Some((cost_ms, end_node)) =
-            destination_cost(to_snap, &time_costs, edges, ways, cost_model)
-        else {
-            continue; // unreachable — omit
+        let Ok(inner) = self.road_graph(cost_model) else {
+            return Vec::new();
         };
+        let (graph, start_idx) = VirtualGraph::new_from_start(inner, from_snap);
+        let (time_costs, predecessors) = dijkstra_ssmt(&graph, start_idx, &target_edge_nodes);
 
-        let path = reconstruct_path(&predecessors, start_idx, end_node);
-        let length_m = path_length(&path, from_snap, to_snap, end_node, nodes);
+        let mut entries = Vec::new();
+        for &(pair_idx, to_idx) in dest_pairs {
+            let to_snap = &to_snaps[to_idx];
 
-        entries.push((
-            pair_idx,
-            MatrixResponseEntry {
-                from: from_idx,
-                to: to_idx,
-                summary: MatrixSummary {
-                    duration: Duration::from_millis(cost_ms as u64),
-                    length: length_m,
+            let Some((cost_ms, end_snap_idx)) = destination_cost(
+                to_snap,
+                &time_costs,
+                &graph.edge_nodes,
+                &graph.ways,
+                cost_model,
+            ) else {
+                continue; // unreachable — omit
+            };
+            let end_snap = &to_snap[end_snap_idx];
+            let path = reconstruct_path(&predecessors, start_idx, end_snap.edge_node_idx);
+            let length_m = path_length(
+                &path,
+                from_snap[0].pos,
+                &to_snap[end_snap_idx],
+                &graph.edge_nodes,
+                &graph.geometry,
+            );
+
+            entries.push((
+                pair_idx,
+                MatrixResponseEntry {
+                    from: from_idx,
+                    to: to_idx,
+                    summary: MatrixSummary {
+                        duration: Duration::from_millis(cost_ms as u64),
+                        length: units.from_meters(length_m),
+                    },
                 },
-            },
-        ));
+            ));
+        }
+        entries
     }
-    entries
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn snap_all(
-    locations: &[Location],
-    snapper: &EdgeSnapper<'_>,
-    vehicle_type: VehicleType,
-    max_radius_m: f32,
-) -> Result<Vec<Snap>> {
-    locations
-        .iter()
-        .map(|loc| {
-            snapper
-                .snap_to_edge(loc.lat, loc.lon, max_radius_m, Some(vehicle_type))
-                .map(Snap::Edge)
-                .ok_or_else(|| {
-                    Error::InvalidRequest(format!(
-                        "no routable position found near ({}, {})",
-                        loc.lat, loc.lon
-                    ))
-                })
-        })
-        .collect()
-}
-
 /// Returns `true` when two snaps represent the same graph location.
-fn snaps_identical(a: &Snap, b: &Snap) -> bool {
-    match (a, b) {
-        (Snap::Node { node_idx: ai, .. }, Snap::Node { node_idx: bi, .. }) => ai == bi,
-        (Snap::Edge(a), Snap::Edge(b)) => {
-            a.edge_idx == b.edge_idx && (a.fraction - b.fraction).abs() < f32::EPSILON
-        }
-        _ => false,
+fn snaps_identical(a: &[Snap], b: &[Snap]) -> bool {
+    if let Some(a_first) = a.first()
+        && let Some(b_first) = b.first()
+    {
+        a_first.pos.is_quasi_equal(b_first.pos)
+    } else {
+        false
     }
 }
 
@@ -318,83 +277,71 @@ fn snaps_identical(a: &Snap, b: &Snap) -> bool {
 /// edge-snapped or node-snapped destination, given settled node costs from an
 /// SSMT run.  Returns `None` if the destination is unreachable.
 fn destination_cost<C: CostModel>(
-    to_snap: &Snap,
+    to_snap: &[Snap],
     time_costs: &HashMap<usize, usize>,
-    edges: &TableFile<Edge>,
-    ways: &TableFile<Way>,
+    edges: &[EdgeNode],
+    ways: &[Way],
     cost_model: C,
 ) -> Option<(usize, usize)> {
-    match to_snap {
-        Snap::Node { node_idx, .. } => time_costs.get(node_idx).map(|&c| (c, *node_idx)),
-        Snap::Edge(e) => edge_destination_cost(e, time_costs, edges, ways, cost_model),
+    let mut best_cost = usize::MAX;
+    let mut best_snap = usize::MAX;
+    for (i, snap) in to_snap.iter().enumerate() {
+        if let Some(cost) = destination_cost_single(snap, time_costs, edges, ways, &cost_model)
+            && cost < best_cost
+        {
+            best_cost = cost;
+            best_snap = i;
+        }
     }
+    let best_snap = to_snap.get(best_snap)?;
+    Some((best_cost, best_snap.edge_node_idx))
 }
 
-fn edge_destination_cost<C: CostModel>(
-    e: &EdgeSnap,
+fn destination_cost_single<C: CostModel>(
+    snap: &Snap,
     time_costs: &HashMap<usize, usize>,
-    edges: &TableFile<Edge>,
-    ways: &TableFile<Way>,
-    cost_model: C,
-) -> Option<(usize, usize)> {
-    let edge = edges.get(e.edge_idx).ok()?;
-    let way = ways.get(edge.way_idx()).ok()?;
-    let full_cost = cost_model.edge_cost(&edge, &way)?;
+    edges: &[EdgeNode],
+    ways: &[Way],
+    cost_model: &C,
+) -> Option<usize> {
+    let base_cost = time_costs.get(&snap.edge_node_idx)?;
+    let edge = edges.get(snap.edge_node_idx)?;
+    let way = ways.get(edge.way_idx())?;
+    let snap_edge_cost = cost_model.traversal_cost(snap.distance_from_start_m, edge, way)?;
 
-    // Approaching from the way's from-node (forward direction).
-    let via_from = time_costs.get(&e.from_node_idx).map(|&base| {
-        (
-            base + (e.fraction * full_cost as f32) as usize,
-            e.from_node_idx,
-        )
-    });
-
-    // Approaching from the way's to-node (reverse, only on bidirectional ways).
-    let via_to = if !way.flags.contains(WayFlags::ONEWAY) {
-        time_costs.get(&e.to_node_idx).map(|&base| {
-            (
-                base + ((1.0 - e.fraction) * full_cost as f32) as usize,
-                e.to_node_idx,
-            )
-        })
-    } else {
-        None
-    };
-
-    match (via_from, via_to) {
-        (Some(a), Some(b)) => Some(if a.0 <= b.0 { a } else { b }),
-        (a, b) => a.or(b),
-    }
+    Some(base_cost + snap_edge_cost)
 }
 
 /// Sum haversine distances along the reconstructed node path, adding fractional
 /// edge segments at origin/destination when those are edge-snapped.
 fn path_length(
     path: &[usize],
-    from_snap: &Snap,
+    from_snap_pos: LatLon,
     to_snap: &Snap,
-    end_node: usize,
-    nodes: &TableFile<Node>,
-) -> u32 {
-    let resolve = |idx: usize| -> router_types::coordinate::LatLon {
+    edges: &[EdgeNode],
+    geometry: &[LatLon],
+) -> f32 {
+    let resolve = |idx: usize| -> Option<router_types::coordinate::LatLon> {
         if idx == VIRTUAL_START {
-            from_snap.pos()
+            Some(from_snap_pos)
+        } else if let Some(edge) = edges.get(idx) {
+            geometry.get(edge.geometry_to_idx()).copied()
         } else {
-            nodes.get(idx).map(|n| n.pos).unwrap_or(from_snap.pos())
+            None
         }
     };
 
-    let mut length_m: u32 = 0;
+    let mut length_m = 0f32;
     for i in 1..path.len() {
-        length_m =
-            length_m.saturating_add(haversine_m(resolve(path[i - 1]), resolve(path[i])) as u32);
+        if let Some(a) = resolve(path[i - 1])
+            && let Some(b) = resolve(path[i])
+        {
+            length_m += haversine_m(a, b);
+        }
     }
 
     // Add fractional segment from the settled end_node to the actual snap point.
-    if let Snap::Edge(e) = to_snap {
-        let end_pos = nodes.get(end_node).map(|n| n.pos).unwrap_or(e.pos);
-        length_m = length_m.saturating_add(haversine_m(end_pos, e.pos) as u32);
-    }
+    length_m += to_snap.distance_from_start_m as f32;
 
     length_m
 }

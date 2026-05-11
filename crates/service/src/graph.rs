@@ -1,16 +1,20 @@
+use std::io;
+
 use router_algorithm::{Graph, Neighbour};
 use router_storage::{
     data::{
-        attrib::{HighwayClass, NodeFlags, WayFlags},
-        edge::{Edge, EdgeFlags},
-        node::Node,
+        attrib::{HighwayClass, TurnFlags, WayFlags},
+        edge::EdgeFlags,
+        edge_node::EdgeNode,
+        turn_edge::TurnEdge,
         way::Way,
     },
-    tablefile::TableFile,
+    tablefile::Ref,
 };
 use router_types::coordinate::LatLon;
 
 use crate::{
+    Service,
     profile::{Profile, VehicleType},
     speed_config::SpeedConfig,
 };
@@ -18,12 +22,11 @@ use crate::{
 // ── CostModel trait ───────────────────────────────────────────────────────────
 
 pub trait CostModel: Send + Sync {
-    /// Traversal cost for `edge`. Returns `None` if the edge is blocked for this vehicle.
-    fn edge_cost(&self, edge: &Edge, way: &Way) -> Option<usize>;
+    /// Traversal cost for given length of the edge represented by `en`. Returns `None` if blocked.
+    fn traversal_cost(&self, dist_m: usize, en: &EdgeNode, way: &Way) -> Option<usize>;
 
-    /// Additional cost for arriving at `node`. Returns `None` if the node physically
-    /// blocks the vehicle. Returns `Some(0)` if freely passable.
-    fn node_cost(&self, node: &Node) -> Option<usize>;
+    /// Turn cost at the shared intersection. Returns `None` if the turn is forbidden.
+    fn turn_cost(&self, te: &TurnEdge) -> Option<usize>;
 
     fn heuristic(&self, from: LatLon, to: LatLon) -> usize;
 }
@@ -35,19 +38,18 @@ pub struct DistanceCost {
 }
 
 impl CostModel for DistanceCost {
-    fn edge_cost(&self, edge: &Edge, _way: &Way) -> Option<usize> {
-        if edge_is_blocked(edge, self.vehicle_type) {
+    fn traversal_cost(&self, dist_m: usize, _en: &EdgeNode, way: &Way) -> Option<usize> {
+        if way.access.contains(access_flag(self.vehicle_type)) {
             return None;
         }
-        Some(edge.dist_m as usize)
+        Some(dist_m)
     }
 
-    fn node_cost(&self, node: &Node) -> Option<usize> {
-        if node_is_blocked(node, self.vehicle_type) {
-            None
-        } else {
-            Some(0)
+    fn turn_cost(&self, te: &TurnEdge) -> Option<usize> {
+        if te.restriction_mask.contains(access_flag(self.vehicle_type)) {
+            return None;
         }
+        Some(0)
     }
 
     fn heuristic(&self, from: LatLon, to: LatLon) -> usize {
@@ -66,10 +68,9 @@ pub struct SpeedMap<'p> {
 }
 
 impl SpeedMap<'_> {
-    /// Effective speed in km/h for the given edge/way, or `None` if forbidden.
     #[inline]
-    pub fn effective_speed(&self, edge: &Edge, way: &Way) -> Option<u8> {
-        let country_id = edge.country_id;
+    fn effective_speed(&self, en: &EdgeNode, way: &Way) -> Option<u8> {
+        let country_id = en.country_id;
         let default = self
             .speed_config
             .default_speed(country_id, self.profile.vehicle_type, way.highway)
@@ -77,8 +78,7 @@ impl SpeedMap<'_> {
         if default == 0 {
             return None;
         }
-        // Edge max_speed overrides Way max_speed when non-zero.
-        let tag_speed = edge.max_speed;
+        let tag_speed = way.max_speed;
         let speed =
             (if tag_speed > 0 { tag_speed } else { default }).min(self.profile.max_speed_kmh);
         let surface_pct = self.profile.surface_pct[way.surface_quality as usize];
@@ -87,10 +87,11 @@ impl SpeedMap<'_> {
         }
         Some(((speed as u32 * surface_pct as u32) / 100).max(1) as u8)
     }
+}
 
-    #[inline]
-    pub fn edge_cost_ms(&self, edge: &Edge, way: &Way) -> Option<usize> {
-        if edge_is_blocked(edge, self.profile.vehicle_type) {
+impl CostModel for SpeedMap<'_> {
+    fn traversal_cost(&self, dist_m: usize, en: &EdgeNode, way: &Way) -> Option<usize> {
+        if way.access.contains(access_flag(self.profile.vehicle_type)) {
             return None;
         }
         if way.dim.blocks_vehicle(
@@ -101,6 +102,7 @@ impl SpeedMap<'_> {
         ) {
             return None;
         }
+        // TODO: toll and ferry penalties should scale with distance (not fixed; currenty applied to each edge))
         let toll_ms = if way.flags.contains(WayFlags::TOLL) {
             if self.avoid_toll {
                 return None;
@@ -117,33 +119,30 @@ impl SpeedMap<'_> {
         } else {
             0
         };
-        let speed = self.effective_speed(edge, way)?;
-        Some((edge.dist_m as f32 * 3600.0 / speed as f32) as usize + toll_ms + ferry_ms)
-    }
-}
-
-impl CostModel for SpeedMap<'_> {
-    fn edge_cost(&self, edge: &Edge, way: &Way) -> Option<usize> {
-        self.edge_cost_ms(edge, way)
+        let speed = self.effective_speed(en, way)?;
+        Some((dist_m as f32 * 3600.0 / speed as f32) as usize + toll_ms + ferry_ms)
     }
 
-    fn node_cost(&self, node: &Node) -> Option<usize> {
-        if node_is_blocked(node, self.profile.vehicle_type) {
+    fn turn_cost(&self, te: &TurnEdge) -> Option<usize> {
+        if te
+            .restriction_mask
+            .contains(access_flag(self.profile.vehicle_type))
+        {
             return None;
         }
-        let flags = node.node_flags();
-        let mut penalty = if flags.contains(NodeFlags::TRAFFIC_SIGNALS) {
-            self.profile.traffic_signal_penalty_ms as usize
-        } else {
-            0
-        };
-        if flags.contains(NodeFlags::TOLL) {
+        let flags = te.turn_flags;
+        let mut cost: usize = 0;
+        if flags.contains(TurnFlags::TRAFFIC_SIGNALS) {
+            cost += self.profile.traffic_signal_penalty_ms as usize;
+        }
+        if flags.contains(TurnFlags::TOLL) {
             if self.avoid_toll {
                 return None;
             }
-            penalty += self.profile.toll_penalty_ms as usize;
+            cost += self.profile.toll_penalty_ms as usize;
         }
-        Some(penalty)
+        cost += turn_angle_penalty(te.turn_angle, self.profile.max_turn_penalty_ms);
+        Some(cost)
     }
 
     fn heuristic(&self, from: LatLon, to: LatLon) -> usize {
@@ -154,114 +153,138 @@ impl CostModel for SpeedMap<'_> {
 // ── RoadGraph ─────────────────────────────────────────────────────────────────
 
 pub struct RoadGraph<'a, C: CostModel> {
-    pub nodes: &'a TableFile<Node>,
-    pub edges: &'a TableFile<Edge>,
-    pub ways: &'a TableFile<Way>,
+    pub edge_nodes: Ref<'a, [EdgeNode]>,
+    pub turn_edges: Ref<'a, [TurnEdge]>,
+    pub ways: Ref<'a, [Way]>,
+    pub geometry: Ref<'a, [LatLon]>,
     pub cost_model: C,
-    pub goal_pos: LatLon,
+}
+
+impl Service {
+    pub fn road_graph<'a, C: CostModel>(
+        &'a self,
+        cost_model: C,
+    ) -> Result<RoadGraph<'a, C>, io::Error> {
+        Ok(RoadGraph {
+            edge_nodes: self.edge_nodes.get_all()?,
+            turn_edges: self.turn_edges.get_all()?,
+            ways: self.ways.get_all()?,
+            geometry: self.geometry.get_all()?,
+            cost_model,
+        })
+    }
+}
+
+impl<C: CostModel> RoadGraph<'_, C> {
+    #[inline]
+    pub fn get_edge_from_pos(&self, edge_node_idx: usize) -> Option<LatLon> {
+        self.edge_nodes
+            .get(edge_node_idx)
+            .and_then(|en| self.geometry.get(en.geometry_from_idx()).copied())
+    }
+    #[inline]
+    pub fn get_edge_to_pos(&self, edge_node_idx: usize) -> Option<LatLon> {
+        self.edge_nodes
+            .get(edge_node_idx)
+            .and_then(|en| self.geometry.get(en.geometry_to_idx()).copied())
+    }
 }
 
 impl<C: CostModel> Graph for RoadGraph<'_, C> {
     type Iter<'a>
-        = EdgeIter<'a, C>
+        = TurnIter<'a, C, false>
+    where
+        Self: 'a;
+
+    type ReverseIter<'a>
+        = TurnIter<'a, C, true>
     where
         Self: 'a;
 
     fn outbound(&self, node_idx: usize) -> Self::Iter<'_> {
-        // TODO: reimplement against EdgeNode / TurnEdge once Phase 5 is done.
-        let first_ptr = usize::MAX;
-        EdgeIter {
+        let first = self
+            .edge_nodes
+            .get(node_idx)
+            .map(|en| en.first_outbound_turn_idx())
+            .unwrap_or(usize::MAX);
+        TurnIter {
             graph: self,
-            current_ptr: first_ptr,
-            reverse: false,
+            current_turn: first,
         }
     }
 
-    fn inbound(&self, node_idx: usize) -> Self::Iter<'_> {
-        // TODO: reimplement against EdgeNode / TurnEdge once Phase 5 is done.
-        let _ = node_idx;
-        let first_ptr = usize::MAX;
-        EdgeIter {
+    fn inbound(&self, node_idx: usize) -> Self::ReverseIter<'_> {
+        let first = self
+            .edge_nodes
+            .get(node_idx)
+            .map(|en| en.first_inbound_turn_idx())
+            .unwrap_or(usize::MAX);
+        TurnIter {
             graph: self,
-            current_ptr: first_ptr,
-            reverse: true,
+            current_turn: first,
         }
     }
 
-    fn heuristic(&self, from_idx: usize, to_idx: usize) -> usize {
-        let from_pos = self
-            .nodes
-            .get(from_idx)
-            .map(|n| n.pos)
-            .unwrap_or(self.goal_pos);
-        let to_pos = self
-            .nodes
-            .get(to_idx)
-            .map(|n| n.pos)
-            .unwrap_or(self.goal_pos);
-        self.cost_model.heuristic(from_pos, to_pos)
+    fn heuristic(&self, from_idx: usize, to_idx: usize) -> Option<usize> {
+        // Traversal of `from_idx` is already paid; use the edge's endpoint as position.
+        // Traversal of `to_idx` is not yet paid, so use its start point.
+        let from_pos = self.get_edge_to_pos(from_idx)?;
+        let to_pos = self.get_edge_from_pos(to_idx)?;
+        Some(self.cost_model.heuristic(from_pos, to_pos))
     }
 }
 
-// ── EdgeIter ──────────────────────────────────────────────────────────────────
+// ── TurnIter ──────────────────────────────────────────────────────────────────
 
-pub struct EdgeIter<'a, C: CostModel> {
+pub struct TurnIter<'a, C: CostModel, const REVERSE: bool> {
     graph: &'a RoadGraph<'a, C>,
-    current_ptr: usize,
-    reverse: bool,
+    current_turn: usize,
 }
 
-impl<C: CostModel> Iterator for EdgeIter<'_, C> {
+impl<C: CostModel, const REVERSE: bool> Iterator for TurnIter<'_, C, REVERSE> {
     type Item = Neighbour;
 
     fn next(&mut self) -> Option<Neighbour> {
         loop {
-            let edge_idx = self.current_ptr;
-            if edge_idx == usize::MAX {
+            let te_idx = self.current_turn;
+            if te_idx == usize::MAX {
                 return None;
             }
-            let edge = match self.graph.edges.get(edge_idx) {
-                Ok(e) => e,
-                Err(err) => {
-                    tracing::warn!(edge_idx, error = %err, "edges.get failed");
-                    return None;
-                }
-            };
+            let te = self.graph.turn_edges.get(te_idx)?;
 
-            self.current_ptr = if self.reverse {
-                edge.next_edge_reverse()
+            self.current_turn = if REVERSE {
+                te.next_inbound_idx()
             } else {
-                edge.next_edge()
+                te.next_outbound_idx()
             };
 
-            let neighbour_idx = if self.reverse {
-                edge.from_node_idx()
-            } else {
-                edge.to_node_idx()
-            };
-
-            let way = match self.graph.ways.get(edge.way_idx()) {
-                Ok(w) => w,
-                Err(err) => {
-                    tracing::warn!(edge_idx, error = %err, "ways.get failed");
-                    continue;
-                }
-            };
-
-            let Some(edge_cost) = self.graph.cost_model.edge_cost(&edge, &way) else {
+            let Some(turn) = self.graph.cost_model.turn_cost(te) else {
                 continue;
             };
 
-            let node_penalty = match self.graph.nodes.get(neighbour_idx).ok() {
-                Some(n) => match self.graph.cost_model.node_cost(&n) {
-                    Some(p) => p,
-                    None => continue,
-                },
-                None => 0,
+            let neighbour_en_idx = if REVERSE {
+                te.from_edge_node_idx()
+            } else {
+                te.to_edge_node_idx()
             };
+
+            let Some(neighbour_en) = self.graph.edge_nodes.get(neighbour_en_idx) else {
+                continue;
+            };
+            let Some(to_way) = self.graph.ways.get(neighbour_en.way_idx as usize) else {
+                continue;
+            };
+            let Some(traversal) = self.graph.cost_model.traversal_cost(
+                neighbour_en.dist_m as usize,
+                neighbour_en,
+                to_way,
+            ) else {
+                continue;
+            };
+
             return Some(Neighbour {
-                node: neighbour_idx,
-                cost: edge_cost + node_penalty,
+                edge_node_idx: neighbour_en_idx,
+                cost: turn + traversal,
             });
         }
     }
@@ -269,27 +292,25 @@ impl<C: CostModel> Iterator for EdgeIter<'_, C> {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-pub(crate) fn edge_is_blocked(edge: &Edge, vehicle: VehicleType) -> bool {
+#[inline]
+fn access_flag(vehicle: VehicleType) -> EdgeFlags {
     match vehicle {
-        VehicleType::Car => edge.flags.contains(EdgeFlags::NO_MOTOR),
-        VehicleType::Hgv => {
-            edge.flags.contains(EdgeFlags::NO_MOTOR) || edge.flags.contains(EdgeFlags::NO_HGV)
-        }
-        VehicleType::Bicycle => edge.flags.contains(EdgeFlags::NO_BICYCLE),
-        VehicleType::Foot => edge.flags.contains(EdgeFlags::NO_FOOT),
+        VehicleType::Car => EdgeFlags::NO_MOTOR,
+        VehicleType::Hgv => EdgeFlags::NO_HGV,
+        VehicleType::Bicycle => EdgeFlags::NO_BICYCLE,
+        VehicleType::Foot => EdgeFlags::NO_FOOT,
     }
 }
 
-pub(crate) fn node_is_blocked(node: &Node, vehicle: VehicleType) -> bool {
-    let flags = node.node_flags();
-    match vehicle {
-        VehicleType::Car => flags.contains(NodeFlags::NO_MOTOR),
-        VehicleType::Hgv => {
-            flags.contains(NodeFlags::NO_MOTOR) || flags.contains(NodeFlags::NO_HGV)
-        }
-        VehicleType::Bicycle => flags.contains(NodeFlags::NO_BICYCLE),
-        VehicleType::Foot => flags.contains(NodeFlags::NO_FOOT),
+/// Quadratic turn-angle penalty: 0 at ≤30°, scales to `max_ms` at 180°.
+#[inline]
+fn turn_angle_penalty(turn_angle: i16, max_ms: u32) -> usize {
+    if max_ms == 0 {
+        return 0;
     }
+    let abs = turn_angle.unsigned_abs() as f32;
+    let t = ((abs - 30.0).max(0.0) / 150.0).min(1.0);
+    (t * t * max_ms as f32) as usize
 }
 
 /// Haversine distance in metres between two `LatLon` positions.

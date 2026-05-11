@@ -80,6 +80,9 @@ pub struct Profile {
     /// Extra travel-time cost in milliseconds added when boarding a ferry.
     /// Models waiting time at the terminal.
     pub ferry_penalty_ms: u32,
+    /// Maximum turn-angle penalty in milliseconds (applied at ±180°, U-turn).
+    /// Penalty scales quadratically from 0 at 30° to this value at 180°.
+    pub max_turn_penalty_ms: u32,
 }
 
 impl Profile {
@@ -116,6 +119,7 @@ impl Profile {
         traffic_signal_penalty_ms: 15_000,
         toll_penalty_ms: 5 * 60_000,
         ferry_penalty_ms: 30 * 60_000,
+        max_turn_penalty_ms: 30_000,
     };
 
     pub const HGV: Profile = Profile {
@@ -138,6 +142,7 @@ impl Profile {
         traffic_signal_penalty_ms: 20_000,
         toll_penalty_ms: 5 * 60_000,
         ferry_penalty_ms: 30 * 60_000,
+        max_turn_penalty_ms: 45_000,
     };
 
     pub const BIKE: Profile = Profile {
@@ -160,6 +165,7 @@ impl Profile {
         traffic_signal_penalty_ms: 10_000,
         toll_penalty_ms: 0,
         ferry_penalty_ms: 30 * 60_000,
+        max_turn_penalty_ms: 5_000,
     };
 
     pub const FOOT: Profile = Profile {
@@ -175,6 +181,7 @@ impl Profile {
         traffic_signal_penalty_ms: 5_000,
         toll_penalty_ms: 0,
         ferry_penalty_ms: 20 * 60_000,
+        max_turn_penalty_ms: 1_000,
     };
 }
 

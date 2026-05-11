@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{Error, Result},
-    meta::{EdgeMeta, NodeMeta, WayMeta},
+    meta::WayMeta,
+    route::Points,
 };
 
 use super::Service;
@@ -16,67 +17,33 @@ use super::Service;
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct InspectRequest {
-    #[cfg_attr(
-        feature = "serde",
-        serde(default, skip_serializing_if = "Option::is_none")
-    )]
-    pub node_id: Option<Vec<i64>>,
-    #[cfg_attr(
-        feature = "serde",
-        serde(default, skip_serializing_if = "Option::is_none")
-    )]
-    pub way_id: Option<i64>,
+    pub way_id: i64,
 }
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct InspectResponse {
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Vec::is_empty"))]
-    pub node: Vec<NodeMeta>,
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Points::is_empty"))]
+    pub points: Points,
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub way: Option<WayMeta>,
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Vec::is_empty"))]
-    pub edge: Vec<EdgeMeta>,
 }
 
 // ── service impl ──────────────────────────────────────────────────────────────
 
 impl Service {
     pub async fn inspect(&self, request: InspectRequest) -> Result<InspectResponse> {
-        match (request.node_id, request.way_id) {
-            (Some(ids), None) => {
-                let mut nodes = Vec::with_capacity(ids.len());
-                for id in ids {
-                    let (_, entry) = self
-                        .node_id_index
-                        .find(id as u64)?
-                        .ok_or(Error::NotFound("NodeId", id))?;
-                    let node = self.nodes.get(entry.idx as usize)?;
-                    nodes.push(NodeMeta::from(&node));
-                }
-                Ok(InspectResponse {
-                    node: nodes,
-                    way: None,
-                    edge: vec![],
-                })
-            }
-            (None, Some(id)) => {
-                let (_, entry) = self
-                    .way_id_index
-                    .find(id as u64)?
-                    .ok_or_else(|| Error::InvalidRequest(format!("way {id} not found")))?;
-                let way_idx = entry.idx as usize;
-                let way = self.ways.get(way_idx)?;
-                let wt = self.collect_way(way_idx, &way);
-                Ok(InspectResponse {
-                    node: wt.nodes,
-                    way: Some(WayMeta::from(&way)),
-                    edge: wt.edges,
-                })
-            }
-            _ => Err(Error::InvalidRequest(
-                "exactly one of node_id or way_id must be set".into(),
-            )),
-        }
+        let id = request.way_id;
+        let (_, entry) = self
+            .way_id_index
+            .find(id as u64)?
+            .ok_or_else(|| Error::InvalidRequest(format!("way {id} not found")))?;
+        let way_idx = entry.idx as usize;
+        let way = self.ways.get(way_idx)?;
+        let geometry = self.geometry.get_range(way.geometry_range())?;
+        Ok(InspectResponse {
+            points: Points::encoded_from(geometry.iter()),
+            way: Some(WayMeta::from(&way)),
+        })
     }
 }

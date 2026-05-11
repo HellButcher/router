@@ -1,12 +1,9 @@
 use std::collections::HashMap;
-use std::num::NonZeroU32;
 use std::ops::{Deref, DerefMut};
 
 use router_types::coordinate::LatLon;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-
-use crate::meta::{EdgeMeta, NodeMeta, WayMeta};
 
 /// Units for distances
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -26,35 +23,21 @@ pub enum Unit {
     Miles,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(untagged))]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-pub enum SingleOrVec<T> {
-    Single(Box<T>),
-    Vec(Vec<T>),
-}
-
-impl<T> SingleOrVec<T> {
+impl Unit {
     #[inline]
-    pub fn single(value: T) -> Self {
-        Self::Single(Box::new(value))
-    }
-
-    #[inline]
-    pub fn vec(values: Vec<T>) -> Self {
-        Self::Vec(values)
-    }
-}
-
-impl<T> Deref for SingleOrVec<T> {
-    type Target = [T];
-    #[inline(always)]
-    fn deref(&self) -> &[T] {
+    pub fn to_meters_factor(&self) -> f32 {
         match self {
-            SingleOrVec::Single(meta) => std::slice::from_ref(meta),
-            SingleOrVec::Vec(vec) => vec,
+            Unit::Kilometers => 1000.0,
+            Unit::Miles => 1609.344,
         }
+    }
+
+    pub fn to_meters(&self, distance: impl Into<f32>) -> f32 {
+        distance.into() * self.to_meters_factor()
+    }
+
+    pub fn from_meters(&self, distance: f32) -> f32 {
+        distance / self.to_meters_factor()
     }
 }
 
@@ -70,44 +53,13 @@ pub struct Location {
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
-    pub radius: Option<NonZeroU32>,
-    #[cfg_attr(
-        feature = "serde",
-        serde(default, skip_serializing_if = "Option::is_none")
-    )]
-    pub allow_u_turns: Option<bool>,
-
-    /// Fraction along the snapped way segment (0.0 = from-node, 1.0 = to-node).
-    /// Only present for [`SnapMode::Edge`] snaps.
-    #[cfg_attr(
-        feature = "serde",
-        serde(default, skip_serializing_if = "Option::is_none")
-    )]
-    pub fraction: Option<f32>,
+    pub radius: Option<f32>,
 
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub id: Option<String>,
-
-    #[cfg_attr(
-        feature = "serde",
-        serde(default, skip_serializing_if = "Option::is_none", skip_deserializing)
-    )]
-    pub node_meta: Option<SingleOrVec<NodeMeta>>,
-
-    #[cfg_attr(
-        feature = "serde",
-        serde(default, skip_serializing_if = "Option::is_none", skip_deserializing)
-    )]
-    pub edge_meta: Option<EdgeMeta>,
-
-    #[cfg_attr(
-        feature = "serde",
-        serde(default, skip_serializing_if = "Option::is_none", skip_deserializing)
-    )]
-    pub way_meta: Option<WayMeta>,
 
     #[cfg(feature = "serde")]
     #[serde(flatten)]
@@ -148,6 +100,22 @@ pub enum Points {
     Array(Vec<[f32; 2]>),
     /// List of Points encoded as a single string using the Polyline Format
     Encoded(String),
+}
+
+impl Points {
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Points::Array(coords) => coords.is_empty(),
+            Points::Encoded(s) => s.is_empty(),
+        }
+    }
+}
+
+impl Default for Points {
+    fn default() -> Self {
+        Self::Array(Vec::new())
+    }
 }
 
 /// A list of Locations

@@ -1,3 +1,4 @@
+use router_types::coordinate::LatLon;
 use thiserror::Error;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -12,6 +13,9 @@ pub enum Error {
 
     #[error("No route found between the given locations")]
     NoRoute,
+
+    #[error("Unable to snap location: {0}")]
+    LocationNotFound(LatLon),
 
     #[error("{0} {1} not found")]
     NotFound(&'static str, i64),

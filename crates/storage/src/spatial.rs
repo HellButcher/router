@@ -25,7 +25,7 @@
 use std::{
     cmp::Reverse,
     collections::BinaryHeap,
-    fs::{self, File, OpenOptions},
+    fs::{File, OpenOptions},
     io,
     mem::size_of,
     path::Path,
@@ -68,6 +68,13 @@ const _: () = {
     assert!(size_of::<RTreeEntry>() == 24);
     assert!(size_of::<RTreeEntry>().is_multiple_of(std::mem::align_of::<RTreeEntry>()));
 };
+
+impl RTreeEntry {
+    #[inline]
+    pub fn idx(&self) -> usize {
+        self.index as usize
+    }
+}
 
 /// File header (no trailing padding field; zeros appended during write).
 #[repr(C)]
@@ -184,17 +191,18 @@ impl SpatialIndex {
         &self,
         lat: f32,
         lon: f32,
-        max_radius_m: f32,
+        max_dist_m: f32,
         refine: impl Fn(&RTreeEntry, f32) -> Option<(f32, T)>,
-    ) -> Option<T> {
+    ) -> (f32, Vec<T>) {
         if self.num_items == 0 || self.num_levels == 0 {
-            return None;
+            return (max_dist_m, Vec::new());
         }
         let entries = self.entries();
         // Min-heap keyed on IEEE 754 distance bits (positive floats compare
         // correctly as u32 bit patterns).
         let mut heap: BinaryHeap<(Reverse<u32>, usize, usize)> = BinaryHeap::new();
-        let mut best: Option<(f32, T)> = None;
+        let mut best_dist = max_dist_m;
+        let mut results = Vec::new();
 
         let root = self.num_levels - 1;
         let root_start = self.level_start(root);
@@ -203,7 +211,7 @@ impl SpatialIndex {
             .enumerate()
         {
             let d = min_dist_to_bbox_m(lat, lon, e);
-            if d <= max_radius_m {
+            if d <= max_dist_m {
                 heap.push((Reverse(d.to_bits()), root_start + i, root));
             }
         }
@@ -211,16 +219,19 @@ impl SpatialIndex {
         while let Some((Reverse(bits), idx, level)) = heap.pop() {
             let bbox_dist = f32::from_bits(bits);
             // Lower bound already exceeds the best true distance: done.
-            let cutoff = best.as_ref().map_or(max_radius_m, |(d, _)| *d);
-            if bbox_dist > cutoff {
+            if bbox_dist > best_dist {
                 break;
             }
             let e = &entries[idx];
             if level == 0 {
                 if let Some((true_dist, payload)) = refine(e, bbox_dist)
-                    && true_dist <= cutoff
+                    && true_dist <= best_dist
                 {
-                    best = Some((true_dist, payload));
+                    if true_dist < best_dist {
+                        best_dist = true_dist;
+                        results.clear();
+                    }
+                    results.push(payload);
                 }
                 continue;
             }
@@ -230,12 +241,12 @@ impl SpatialIndex {
             let child_end = (child_start + self.node_size).min(self.level_start(level));
             for (ci, ce) in entries[child_start..child_end].iter().enumerate() {
                 let d = min_dist_to_bbox_m(lat, lon, ce);
-                if d <= cutoff {
+                if d <= best_dist {
                     heap.push((Reverse(d.to_bits()), child_start + ci, child_level));
                 }
             }
         }
-        best.map(|(_, payload)| payload)
+        (best_dist, results)
     }
 
     /// Find the nearest **node** within `max_radius_m` metres of `(lat, lon)`.
@@ -244,9 +255,10 @@ impl SpatialIndex {
     /// Node leaf bboxes are points (`min == max`), so bbox distance equals true
     /// distance and the first leaf dequeued is always the nearest.
     pub fn nearest(&self, lat: f32, lon: f32, max_radius_m: f32) -> Option<(u64, f32, f32, f32)> {
-        self.nearest_refined(lat, lon, max_radius_m, |e, d| {
+        let (_, results) = self.nearest_refined(lat, lon, max_radius_m, |e, d| {
             Some((d, (e.index, e.min_lat, e.min_lon, d)))
-        })
+        });
+        results.first().copied()
     }
 }
 
@@ -542,6 +554,7 @@ fn compute_level_lens(num_items: usize, node_size: usize) -> Vec<usize> {
 // ── geometry ──────────────────────────────────────────────────────────────────
 
 fn min_dist_to_bbox_m(lat: f32, lon: f32, e: &RTreeEntry) -> f32 {
+    // TODO: distance when inside bbox = 0, not distance to edge.
     haversine_m(
         lat,
         lon,

@@ -114,6 +114,11 @@ impl EdgeNode {
     }
 
     #[inline]
+    pub fn way_idx(&self) -> usize {
+        self.way_idx as usize
+    }
+
+    #[inline]
     pub fn geometry_from_idx(&self) -> usize {
         self.geometry_from_idx as usize
     }
@@ -121,13 +126,23 @@ impl EdgeNode {
     /// Exclusive end index into `geometry.bin` (`geometry_from_idx + |geometry_len|`).
     #[inline]
     pub fn geometry_to_idx(&self) -> usize {
-        self.geometry_from_idx as usize + self.geometry_count() as usize
+        (self.geometry_from_idx as isize + self.geometry_len as isize) as usize
     }
 
     /// Number of geometry points in the slice (always ≥ 2).
     #[inline]
-    pub fn geometry_count(&self) -> u16 {
-        self.geometry_len.unsigned_abs()
+    pub fn geometry_count(&self) -> usize {
+        self.geometry_len.unsigned_abs() as usize
+    }
+
+    // Range of geometry point indices in `geometry.bin` for this EdgeNode's segment, in storage order.
+    #[inline]
+    pub fn geometry_range(&self) -> std::ops::Range<usize> {
+        if self.is_backward() {
+            self.geometry_to_idx()..self.geometry_from_idx()
+        } else {
+            self.geometry_from_idx()..self.geometry_to_idx()
+        }
     }
 
     /// True if this EdgeNode traverses its geometry slice in reverse (backward direction).

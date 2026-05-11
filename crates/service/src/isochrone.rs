@@ -1,11 +1,8 @@
 use std::collections::HashMap;
+use std::io;
 
 use router_algorithm::convex_hull::convex_hull;
 use router_algorithm::dikstra::dijkstra_within_budget;
-use router_storage::data::edge::Edge;
-use router_storage::data::node::Node;
-use router_storage::data::way::Way;
-use router_storage::tablefile::TableFile;
 
 use router_types::coordinate::LatLon;
 #[cfg(feature = "serde")]
@@ -13,9 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::common::Points;
 use crate::error::{Error, Result};
-use crate::graph::{DistanceCost, RoadGraph, SpeedMap};
+use crate::graph::{DistanceCost, SpeedMap};
 use crate::profile::Profile;
-use crate::snap::{EdgeSnapper, Snap};
+use crate::snap::Snap;
 use crate::virtual_graph::{VIRTUAL_START, VirtualGraph};
 
 use super::Service;
@@ -104,53 +101,46 @@ impl Service {
 
         let max_cost = to_cost(*ranges.last().unwrap(), request.unit);
 
-        let snapper = EdgeSnapper {
-            nodes: &self.nodes,
-            edges: &self.edges,
-            ways: &self.ways,
-            edge_spatial: &self.edge_spatial,
-        };
-        let origin_snap = snapper
-            .snap_to_edge(
-                request.origin.lat,
-                request.origin.lon,
-                self.max_radius_m,
-                Some(profile.vehicle_type),
-            )
-            .map(Snap::Edge)
-            .ok_or_else(|| {
-                Error::InvalidRequest(format!(
-                    "no routable position found near ({}, {})",
-                    request.origin.lat, request.origin.lon
-                ))
-            })?;
+        let origin_snaps = self.snapper()?.snap(
+            request.origin.lat,
+            request.origin.lon,
+            self.max_radius_m,
+            Some(profile.vehicle_type),
+        );
+        if origin_snaps.is_empty() {
+            return Err(Error::InvalidRequest(format!(
+                "no routable position found near ({}, {})",
+                request.origin.lat, request.origin.lon
+            )));
+        }
 
-        let origin_pos = origin_snap.pos();
-        let dist_map = run_isochrone(
-            &origin_snap,
+        let origin_pos = origin_snaps[0].pos;
+        let dist_map = self.run_isochrone(
+            &origin_snaps,
             max_cost,
-            &self.nodes,
-            &self.edges,
-            &self.ways,
             profile,
-            &self.speed_config,
             request.avoid_toll,
             request.avoid_ferry,
             request.unit,
-        );
+        )?;
 
+        let edge_nodes = self.edge_nodes.get_all()?;
+        let geometry = self.geometry.get_all()?;
+        // TODO: optimize hull computation by iterating dist_map once and collecting points for all ranges in one pass, rather than iterating once per range
+        // (also exclude points already included in smaller ranges, since they won't affect the hull
+        // of larger ranges. instead include the hull-points of the smaller range as fixed points for the larger range, since they will be on the hull of the larger range too)
         let result_ranges = ranges
             .iter()
             .map(|&range_val| {
                 let threshold = to_cost(range_val, request.unit);
                 let mut pts: Vec<[f32; 2]> = dist_map
                     .iter()
-                    .filter_map(|(&node_idx, &cost)| {
-                        if cost <= threshold && node_idx != VIRTUAL_START {
-                            self.nodes
-                                .get(node_idx)
-                                .ok()
-                                .map(|n| [n.pos.lat, n.pos.lon])
+                    .filter_map(|(&edge_node_idx, &cost)| {
+                        if cost <= threshold && edge_node_idx != VIRTUAL_START {
+                            let edge_node = edge_nodes.get(edge_node_idx)?;
+                            geometry
+                                .get(edge_node.geometry_from_idx())
+                                .map(|pos| [pos.lat, pos.lon])
                         } else {
                             None
                         }
@@ -185,47 +175,34 @@ fn to_cost(value: f64, unit: IsochroneUnit) -> usize {
     }
 }
 
-fn run_isochrone(
-    origin_snap: &Snap,
-    max_cost: usize,
-    nodes: &TableFile<Node>,
-    edges: &TableFile<Edge>,
-    ways: &TableFile<Way>,
-    profile: &Profile,
-    speed_config: &crate::speed_config::SpeedConfig,
-    avoid_toll: bool,
-    avoid_ferry: bool,
-    unit: IsochroneUnit,
-) -> HashMap<usize, usize> {
-    match unit {
-        IsochroneUnit::Km | IsochroneUnit::Mi => {
-            let inner = RoadGraph {
-                nodes,
-                edges,
-                ways,
-                cost_model: DistanceCost {
+impl Service {
+    fn run_isochrone(
+        &self,
+        origin_snaps: &[Snap],
+        max_cost: usize,
+        profile: &Profile,
+        avoid_toll: bool,
+        avoid_ferry: bool,
+        unit: IsochroneUnit,
+    ) -> Result<HashMap<usize, usize>, io::Error> {
+        match unit {
+            IsochroneUnit::Km | IsochroneUnit::Mi => {
+                let inner = self.road_graph(DistanceCost {
                     vehicle_type: profile.vehicle_type,
-                },
-                goal_pos: origin_snap.pos(),
-            };
-            let (graph, start_idx) = VirtualGraph::new_from_start(inner, origin_snap);
-            dijkstra_within_budget(&graph, start_idx, max_cost)
-        }
-        IsochroneUnit::Min => {
-            let inner = RoadGraph {
-                nodes,
-                edges,
-                ways,
-                cost_model: SpeedMap {
+                })?;
+                let (graph, start_idx) = VirtualGraph::new_from_start(inner, origin_snaps);
+                Ok(dijkstra_within_budget(&graph, start_idx, max_cost))
+            }
+            IsochroneUnit::Min => {
+                let inner = self.road_graph(SpeedMap {
                     profile,
-                    speed_config,
+                    speed_config: &self.speed_config,
                     avoid_toll,
                     avoid_ferry,
-                },
-                goal_pos: origin_snap.pos(),
-            };
-            let (graph, start_idx) = VirtualGraph::new_from_start(inner, origin_snap);
-            dijkstra_within_budget(&graph, start_idx, max_cost)
+                })?;
+                let (graph, start_idx) = VirtualGraph::new_from_start(inner, origin_snaps);
+                Ok(dijkstra_within_budget(&graph, start_idx, max_cost))
+            }
         }
     }
 }

@@ -35,14 +35,23 @@ impl PartialOrd for HeapState {
 /// Returns `Some((path, cost))` where `path` is the sequence of node indices
 /// from `start` to `goal` (inclusive) and `cost` is the total true edge cost.
 /// Returns `None` if no path exists.
-pub fn a_star(graph: impl Graph, start: usize, goal: usize) -> Option<(Vec<usize>, usize)> {
+pub fn a_star(
+    graph: impl Graph,
+    start: usize,
+    goal: usize,
+    construct_path: bool,
+) -> Option<(Vec<usize>, usize)> {
+    if start == goal {
+        return Some((vec![start], 0));
+    }
+    let initial_cost_estimate = graph.heuristic(start, goal)?;
     let mut dist: HashMap<usize, usize> = HashMap::new();
     let mut predecessors: HashMap<usize, usize> = HashMap::new();
     let mut heap = BinaryHeap::new();
 
     dist.insert(start, 0);
     heap.push(HeapState {
-        f_cost: graph.heuristic(start, goal),
+        f_cost: initial_cost_estimate,
         g_cost: 0,
         position: start,
     });
@@ -52,7 +61,11 @@ pub fn a_star(graph: impl Graph, start: usize, goal: usize) -> Option<(Vec<usize
     }) = heap.pop()
     {
         if position == goal {
-            let path = reconstruct_path(&predecessors, start, goal);
+            let path = if construct_path {
+                reconstruct_path(&predecessors, start, goal)
+            } else {
+                Vec::new()
+            };
             return Some((path, g_cost));
         }
         // Skip stale entries.
@@ -61,26 +74,26 @@ pub fn a_star(graph: impl Graph, start: usize, goal: usize) -> Option<(Vec<usize
         }
         for edge in graph.outbound(position) {
             let next_g = g_cost + edge.cost;
-            match dist.entry(edge.node) {
+            let improved = match dist.entry(edge.edge_node_idx) {
                 Entry::Occupied(mut e) if next_g < *e.get() => {
                     e.insert(next_g);
-                    predecessors.insert(edge.node, position);
-                    heap.push(HeapState {
-                        f_cost: next_g + graph.heuristic(edge.node, goal),
-                        g_cost: next_g,
-                        position: edge.node,
-                    });
+                    true
                 }
                 Entry::Vacant(e) => {
                     e.insert(next_g);
-                    predecessors.insert(edge.node, position);
-                    heap.push(HeapState {
-                        f_cost: next_g + graph.heuristic(edge.node, goal),
-                        g_cost: next_g,
-                        position: edge.node,
-                    });
+                    true
                 }
-                _ => {}
+                _ => false,
+            };
+            if improved {
+                predecessors.insert(edge.edge_node_idx, position);
+                if let Some(remaining_cost_estimate) = graph.heuristic(edge.edge_node_idx, goal) {
+                    heap.push(HeapState {
+                        f_cost: next_g + remaining_cost_estimate,
+                        g_cost: next_g,
+                        position: edge.edge_node_idx,
+                    });
+                };
             }
         }
     }

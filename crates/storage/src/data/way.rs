@@ -38,12 +38,12 @@ pub struct Way {
     pub max_speed: u8,
     _pad: u8,
     /// Number of entries in `node_refs.bin` starting at `node_refs_idx`.
-    pub node_refs_count: u16,
+    pub geometry_len: u16,
     /// Physical dimension restrictions (0 in any field = no restriction).
     pub dim: DimRestriction,
     _pad2: u32,
     /// Starting index into `node_refs.bin` for this way's node-table index list.
-    pub node_refs_idx: u64,
+    pub geometry_offset_idx: u64,
 }
 
 const _: () = assert!(std::mem::size_of::<Way>() == 32);
@@ -64,10 +64,10 @@ impl Way {
             access: EdgeFlags::empty(),
             max_speed: 0,
             _pad: 0,
-            node_refs_count: 0,
+            geometry_len: 0,
             dim: DimRestriction::NONE,
             _pad2: 0,
-            node_refs_idx: 0,
+            geometry_offset_idx: 0,
         }
     }
 
@@ -81,6 +81,22 @@ impl Way {
     #[inline]
     pub fn is_backward(&self) -> bool {
         !self.flags.contains(WayFlags::DIRECTION_FORWARD)
+    }
+
+    #[inline]
+    pub fn geometry_len(&self) -> usize {
+        self.geometry_len as usize
+    }
+
+    #[inline]
+    pub fn geometry_offset_idx(&self) -> usize {
+        self.geometry_offset_idx as usize
+    }
+
+    #[inline]
+    pub fn geometry_range(&self) -> std::ops::Range<usize> {
+        let idx = self.geometry_offset_idx();
+        idx..(idx + self.geometry_len())
     }
 }
 

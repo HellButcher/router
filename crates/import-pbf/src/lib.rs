@@ -416,8 +416,8 @@ impl<R: io::BufRead + Send> Importer<R> {
                                 way.access = if is_reverse { bwd_access } else { fwd_access };
                                 way.max_speed = if is_reverse { bwd_speed } else { fwd_speed };
                                 way.dim = dim;
-                                way.node_refs_idx = node_refs_idx as u64;
-                                way.node_refs_count = node_refs_len as u16;
+                                way.geometry_offset_idx = node_refs_idx as u64;
+                                way.geometry_len = node_refs_len as u16;
                                 out_ways.push(way);
                             } else if has_fwd_contraflow || has_bwd_contraflow {
                                 // Oneway with bicycle contraflow → two entries.
@@ -434,8 +434,8 @@ impl<R: io::BufRead + Send> Importer<R> {
                                 fwd.access = fwd_acc;
                                 fwd.max_speed = fwd_speed;
                                 fwd.dim = dim;
-                                fwd.node_refs_idx = node_refs_idx as u64;
-                                fwd.node_refs_count = node_refs_len as u16;
+                                fwd.geometry_offset_idx = node_refs_idx as u64;
+                                fwd.geometry_len = node_refs_len as u16;
                                 out_ways.push(fwd);
                                 let mut bwd = Way::new(id);
                                 bwd.highway = highway_class;
@@ -444,8 +444,8 @@ impl<R: io::BufRead + Send> Importer<R> {
                                 bwd.access = bwd_acc;
                                 bwd.max_speed = bwd_speed;
                                 bwd.dim = dim;
-                                bwd.node_refs_idx = node_refs_idx as u64;
-                                bwd.node_refs_count = node_refs_len as u16;
+                                bwd.geometry_offset_idx = node_refs_idx as u64;
+                                bwd.geometry_len = node_refs_len as u16;
                                 out_ways.push(bwd);
                             } else if needs_pair {
                                 // Bidirectional with different per-direction properties.
@@ -457,8 +457,8 @@ impl<R: io::BufRead + Send> Importer<R> {
                                 fwd.access = fwd_access;
                                 fwd.max_speed = fwd_speed;
                                 fwd.dim = dim;
-                                fwd.node_refs_idx = node_refs_idx as u64;
-                                fwd.node_refs_count = node_refs_len as u16;
+                                fwd.geometry_offset_idx = node_refs_idx as u64;
+                                fwd.geometry_len = node_refs_len as u16;
                                 out_ways.push(fwd);
                                 let mut bwd = Way::new(id);
                                 bwd.highway = highway_class;
@@ -467,8 +467,8 @@ impl<R: io::BufRead + Send> Importer<R> {
                                 bwd.access = bwd_access;
                                 bwd.max_speed = bwd_speed;
                                 bwd.dim = dim;
-                                bwd.node_refs_idx = node_refs_idx as u64;
-                                bwd.node_refs_count = node_refs_len as u16;
+                                bwd.geometry_offset_idx = node_refs_idx as u64;
+                                bwd.geometry_len = node_refs_len as u16;
                                 out_ways.push(bwd);
                             } else {
                                 // Bidirectional, identical properties in both directions.
@@ -479,8 +479,8 @@ impl<R: io::BufRead + Send> Importer<R> {
                                 way.access = fwd_access;
                                 way.max_speed = fwd_speed;
                                 way.dim = dim;
-                                way.node_refs_idx = node_refs_idx as u64;
-                                way.node_refs_count = node_refs_len as u16;
+                                way.geometry_offset_idx = node_refs_idx as u64;
+                                way.geometry_len = node_refs_len as u16;
                                 out_ways.push(way);
                             }
                         }
@@ -490,7 +490,7 @@ impl<R: io::BufRead + Send> Importer<R> {
                         let target_index_offset = way_nodes_append.append(way_node_refs);
                         // update node_refs_idx for all ways in this blob
                         for way in &mut out_ways {
-                            way.node_refs_idx += target_index_offset as u64;
+                            way.geometry_offset_idx += target_index_offset as u64;
                         }
                     }
 
@@ -606,7 +606,8 @@ impl<R: io::BufRead + Send> Importer<R> {
                         DEFAULT_CHUNK_SIZE,
                         |i| {
                             let way = &ways_slice[i];
-                            let node_idx = way_nodes_slice[way.node_refs_idx as usize].0 as usize;
+                            let node_idx =
+                                way_nodes_slice[way.geometry_offset_idx as usize].0 as usize;
                             nodes_slice[node_idx].pos.into()
                         },
                         &scratch,
@@ -658,13 +659,13 @@ impl<R: io::BufRead + Send> Importer<R> {
 
                 let mut geo_offset: u64 = 0;
                 for way in ways_mut.iter_mut() {
-                    let old_start = way.node_refs_idx as usize;
-                    let len = way.node_refs_count as usize;
+                    let old_start = way.geometry_offset_idx as usize;
+                    let len = way.geometry_len as usize;
 
                     if way.flags.contains(WayFlags::HAS_PAIR)
                         && way.flags.contains(WayFlags::DIRECTION_BACKWARD)
                     {
-                        way.node_refs_idx = geo_offset - len as u64;
+                        way.geometry_offset_idx = geo_offset - len as u64;
                         continue;
                     }
 
@@ -682,7 +683,7 @@ impl<R: io::BufRead + Send> Importer<R> {
                         .append(&geometry_buf)
                         .map_err(Error::WriteError)?;
 
-                    way.node_refs_idx = geo_offset;
+                    way.geometry_offset_idx = geo_offset;
                     geo_offset += len as u64;
                 }
 
@@ -735,8 +736,8 @@ impl<R: io::BufRead + Send> Importer<R> {
                 .enumerate()
                 .try_for_each(|(way_idx, way)| -> Result<()> {
                     let flags = way.flags;
-                    let refs_start = way.node_refs_idx as usize;
-                    let refs_len = way.node_refs_count as usize;
+                    let refs_start = way.geometry_offset_idx as usize;
+                    let refs_len = way.geometry_len as usize;
 
                     let (fwd_way_idx, bwd_way_idx): (Option<usize>, Option<usize>) =
                         if flags.contains(WayFlags::HAS_PAIR) {
@@ -840,8 +841,7 @@ impl<R: io::BufRead + Send> Importer<R> {
                         count,
                         DEFAULT_CHUNK_SIZE,
                         |i| {
-                            let pos =
-                                geometry_slice[edge_nodes_slice[i].geometry_from_idx as usize];
+                            let pos = geometry_slice[edge_nodes_slice[i].geometry_from_idx()];
                             (pos.lat, pos.lon)
                         },
                         &scratch,
@@ -1039,15 +1039,15 @@ fn bearing(from: LatLon, to: LatLon) -> f32 {
 }
 
 fn turn_angle(x: &EdgeNode, y: &EdgeNode, geom: &[LatLon]) -> i16 {
-    let xg = x.geometry_from_idx as usize;
-    let xc = x.geometry_count() as usize;
+    let xg = x.geometry_from_idx();
+    let xc = x.geometry_count();
     let (xa, xb) = if x.geometry_len > 0 {
         (geom[xg + xc - 2], geom[xg + xc - 1])
     } else {
         (geom[xg + 1], geom[xg])
     };
-    let yg = y.geometry_from_idx as usize;
-    let yc = y.geometry_count() as usize;
+    let yg = y.geometry_from_idx();
+    let yc = y.geometry_count();
     let (ya, yb) = if y.geometry_len > 0 {
         (geom[yg], geom[yg + 1])
     } else {

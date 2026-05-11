@@ -3,7 +3,7 @@ use std::{
     collections::{BinaryHeap, HashMap, hash_map::Entry},
 };
 
-use crate::Graph;
+use crate::{Graph, reconstruct_path_bidir};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 struct HeapState {
@@ -42,10 +42,16 @@ impl PartialOrd for HeapState {
 /// Returns `Some((path, cost))` where `path` is the sequence of node indices
 /// from `start` to `goal` (inclusive) and `cost` is the total true edge cost.
 /// Returns `None` if no path exists.
-pub fn bidir_a_star(graph: impl Graph, start: usize, goal: usize) -> Option<(Vec<usize>, usize)> {
+pub fn bidir_a_star(
+    graph: impl Graph,
+    start: usize,
+    goal: usize,
+    construct_path: bool,
+) -> Option<(Vec<usize>, usize)> {
     if start == goal {
         return Some((vec![start], 0));
     }
+    let initial_cost_estimate = graph.heuristic(start, goal)?;
 
     // Forward search state (from start toward goal).
     let mut dist_f: HashMap<usize, usize> = HashMap::new();
@@ -59,14 +65,14 @@ pub fn bidir_a_star(graph: impl Graph, start: usize, goal: usize) -> Option<(Vec
 
     dist_f.insert(start, 0);
     heap_f.push(HeapState {
-        f_cost: graph.heuristic(start, goal),
+        f_cost: initial_cost_estimate,
         g_cost: 0,
         position: start,
     });
 
     dist_b.insert(goal, 0);
     heap_b.push(HeapState {
-        f_cost: graph.heuristic(goal, start),
+        f_cost: initial_cost_estimate,
         g_cost: 0,
         position: goal,
     });
@@ -99,7 +105,7 @@ pub fn bidir_a_star(graph: impl Graph, start: usize, goal: usize) -> Option<(Vec
             }
             for edge in graph.outbound(position) {
                 let next_g = g_cost + edge.cost;
-                let improved = match dist_f.entry(edge.node) {
+                let improved = match dist_f.entry(edge.edge_node_idx) {
                     Entry::Occupied(mut e) if next_g < *e.get() => {
                         e.insert(next_g);
                         true
@@ -111,17 +117,20 @@ pub fn bidir_a_star(graph: impl Graph, start: usize, goal: usize) -> Option<(Vec
                     _ => false,
                 };
                 if improved {
-                    pred_f.insert(edge.node, position);
-                    heap_f.push(HeapState {
-                        f_cost: next_g + graph.heuristic(edge.node, goal),
-                        g_cost: next_g,
-                        position: edge.node,
-                    });
-                    if let Some(&back_g) = dist_b.get(&edge.node) {
+                    pred_f.insert(edge.edge_node_idx, position);
+                    if let Some(remaining_cost_estimate) = graph.heuristic(edge.edge_node_idx, goal)
+                    {
+                        heap_f.push(HeapState {
+                            f_cost: next_g + remaining_cost_estimate,
+                            g_cost: next_g,
+                            position: edge.edge_node_idx,
+                        });
+                    }
+                    if let Some(&back_g) = dist_b.get(&edge.edge_node_idx) {
                         let total = next_g.saturating_add(back_g);
                         if total < best {
                             best = total;
-                            meeting = Some(edge.node);
+                            meeting = Some(edge.edge_node_idx);
                         }
                     }
                 }
@@ -139,7 +148,7 @@ pub fn bidir_a_star(graph: impl Graph, start: usize, goal: usize) -> Option<(Vec
             }
             for edge in graph.inbound(position) {
                 let next_g = g_cost + edge.cost;
-                let improved = match dist_b.entry(edge.node) {
+                let improved = match dist_b.entry(edge.edge_node_idx) {
                     Entry::Occupied(mut e) if next_g < *e.get() => {
                         e.insert(next_g);
                         true
@@ -151,17 +160,21 @@ pub fn bidir_a_star(graph: impl Graph, start: usize, goal: usize) -> Option<(Vec
                     _ => false,
                 };
                 if improved {
-                    pred_b.insert(edge.node, position);
-                    heap_b.push(HeapState {
-                        f_cost: next_g + graph.heuristic(edge.node, start),
-                        g_cost: next_g,
-                        position: edge.node,
-                    });
-                    if let Some(&fwd_g) = dist_f.get(&edge.node) {
+                    pred_b.insert(edge.edge_node_idx, position);
+                    if let Some(remaining_cost_estimate) =
+                        graph.heuristic(start, edge.edge_node_idx)
+                    {
+                        heap_b.push(HeapState {
+                            f_cost: next_g + remaining_cost_estimate,
+                            g_cost: next_g,
+                            position: edge.edge_node_idx,
+                        });
+                    }
+                    if let Some(&fwd_g) = dist_f.get(&edge.edge_node_idx) {
                         let total = fwd_g.saturating_add(next_g);
                         if total < best {
                             best = total;
-                            meeting = Some(edge.node);
+                            meeting = Some(edge.edge_node_idx);
                         }
                     }
                 }
@@ -169,32 +182,11 @@ pub fn bidir_a_star(graph: impl Graph, start: usize, goal: usize) -> Option<(Vec
         }
     }
 
-    let meeting = meeting?;
-
-    // Reconstruct forward half: start → meeting.
-    let mut path = Vec::new();
-    let mut cur = meeting;
-    loop {
-        path.push(cur);
-        if cur == start {
-            break;
-        }
-        match pred_f.get(&cur) {
-            Some(&prev) => cur = prev,
-            None => break,
-        }
-    }
-    path.reverse();
-
-    // Reconstruct backward half: meeting → goal.
-    cur = meeting;
-    while let Some(&next) = pred_b.get(&cur) {
-        cur = next;
-        path.push(cur);
-        if cur == goal {
-            break;
-        }
-    }
+    let path = if construct_path {
+        reconstruct_path_bidir(&pred_f, &pred_b, start, meeting?, goal)
+    } else {
+        Vec::new()
+    };
 
     Some((path, best))
 }

@@ -3,7 +3,7 @@ use std::{
     collections::{BinaryHeap, HashMap, hash_map::Entry},
 };
 
-use crate::Graph;
+use crate::{Graph, reconstruct_path_bidir};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 struct HeapState {
@@ -36,7 +36,12 @@ impl PartialOrd for HeapState {
 /// Returns `Some((path, cost))` where `path` is the sequence of node indices
 /// from `start` to `goal` (inclusive) and `cost` is the total edge cost.
 /// Returns `None` if no path exists.
-pub fn bidir_dijkstra(graph: impl Graph, start: usize, goal: usize) -> Option<(Vec<usize>, usize)> {
+pub fn bidir_dijkstra(
+    graph: impl Graph,
+    start: usize,
+    goal: usize,
+    construct_path: bool,
+) -> Option<(Vec<usize>, usize)> {
     if start == goal {
         return Some((vec![start], 0));
     }
@@ -92,7 +97,7 @@ pub fn bidir_dijkstra(graph: impl Graph, start: usize, goal: usize) -> Option<(V
             }
             for edge in graph.outbound(position) {
                 let next_cost = cost + edge.cost;
-                let improved = match dist_f.entry(edge.node) {
+                let improved = match dist_f.entry(edge.edge_node_idx) {
                     Entry::Occupied(mut e) if next_cost < *e.get() => {
                         e.insert(next_cost);
                         true
@@ -104,17 +109,17 @@ pub fn bidir_dijkstra(graph: impl Graph, start: usize, goal: usize) -> Option<(V
                     _ => false,
                 };
                 if improved {
-                    pred_f.insert(edge.node, position);
+                    pred_f.insert(edge.edge_node_idx, position);
                     heap_f.push(HeapState {
                         cost: next_cost,
-                        position: edge.node,
+                        position: edge.edge_node_idx,
                     });
                     // next_cost == dist_f[edge.node] here (just committed).
-                    if let Some(&back_cost) = dist_b.get(&edge.node) {
+                    if let Some(&back_cost) = dist_b.get(&edge.edge_node_idx) {
                         let total = next_cost.saturating_add(back_cost);
                         if total < best {
                             best = total;
-                            meeting = Some(edge.node);
+                            meeting = Some(edge.edge_node_idx);
                         }
                     }
                 }
@@ -129,7 +134,7 @@ pub fn bidir_dijkstra(graph: impl Graph, start: usize, goal: usize) -> Option<(V
             }
             for edge in graph.inbound(position) {
                 let next_cost = cost + edge.cost;
-                let improved = match dist_b.entry(edge.node) {
+                let improved = match dist_b.entry(edge.edge_node_idx) {
                     Entry::Occupied(mut e) if next_cost < *e.get() => {
                         e.insert(next_cost);
                         true
@@ -141,17 +146,17 @@ pub fn bidir_dijkstra(graph: impl Graph, start: usize, goal: usize) -> Option<(V
                     _ => false,
                 };
                 if improved {
-                    pred_b.insert(edge.node, position);
+                    pred_b.insert(edge.edge_node_idx, position);
                     heap_b.push(HeapState {
                         cost: next_cost,
-                        position: edge.node,
+                        position: edge.edge_node_idx,
                     });
                     // next_cost == dist_b[edge.node] here (just committed).
-                    if let Some(&fwd_cost) = dist_f.get(&edge.node) {
+                    if let Some(&fwd_cost) = dist_f.get(&edge.edge_node_idx) {
                         let total = fwd_cost.saturating_add(next_cost);
                         if total < best {
                             best = total;
-                            meeting = Some(edge.node);
+                            meeting = Some(edge.edge_node_idx);
                         }
                     }
                 }
@@ -159,34 +164,11 @@ pub fn bidir_dijkstra(graph: impl Graph, start: usize, goal: usize) -> Option<(V
         }
     }
 
-    let meeting = meeting?;
-
-    // Reconstruct forward half: start → meeting.
-    let mut path = Vec::new();
-    let mut cur = meeting;
-    loop {
-        path.push(cur);
-        if cur == start {
-            break;
-        }
-        match pred_f.get(&cur) {
-            Some(&prev) => cur = prev,
-            None => break,
-        }
-    }
-    path.reverse();
-
-    // Reconstruct backward half: meeting → goal.
-    // pred_b[node] = the node that was expanded when `node` was discovered,
-    // i.e. the successor in the forward direction.
-    cur = meeting;
-    while let Some(&next) = pred_b.get(&cur) {
-        cur = next;
-        path.push(cur);
-        if cur == goal {
-            break;
-        }
-    }
+    let path = if construct_path {
+        reconstruct_path_bidir(&pred_f, &pred_b, start, meeting?, goal)
+    } else {
+        Vec::new()
+    };
 
     Some((path, best))
 }

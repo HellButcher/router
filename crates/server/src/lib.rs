@@ -140,6 +140,11 @@ impl From<RouterError> for Problem {
                 title: "No Route Found",
                 detail,
             },
+            RouterError::LocationNotFound(_) => Self {
+                status: 404,
+                title: "Location Not Found",
+                detail,
+            },
             RouterError::InvalidRequest(_) => Self {
                 status: 400,
                 title: "Invalid Request",
